@@ -19,6 +19,9 @@ Design decisions:
   - Soft delete: is_deleted flag, deleted_for_everyone flag
   - All PKs are BIGINT (BigAutoField) for scale
 """
+from django.db.models import constraints
+from os import read
+from operator import truediv
 from authapp import serializers
 from django.db import models
 from django.conf import settings
@@ -59,7 +62,7 @@ class Conversation(models.Model):
         default="",
         help_text="Cached last message snippet for dashboard list — updated on every new message",
     )
-    last_message_at = models.DateTimeField(#❔I used db_index=True here, this is why I haven't added this field on meta class indexes = [ ]  am I right?
+    last_message_at = models.DateTimeField(#❔I used db_index=True here, this is why I haven't added this field on meta class indexes = [ ]  am I right? how to kow which field I've to use for indexing
         null=True,
         blank=True,
         db_index=True,    # sorted by this on dashboard
@@ -164,29 +167,195 @@ class ConversationParticipant(models.Model):
 
 
 
+# ─────────────────────────────────────────────────────────────
+# MESSAGE  (unified DM + Group)
+# ─────────────────────────────────────────────────────────────
+class Message(models.Model):
+    """
+    Single table for both DM messages and Group messages.
+
+    EXACTLY ONE of conversation or group must be set.
+    The CHECK constraint in the DB enforces this:
+        CHECK ((conversation_id IS NULL) != (group_id IS NULL))
+
+    E2E Encryption:
+        content_encrypted stores the ciphertext blob only.
+        The server NEVER sees plaintext. Keys live on devices.
+        For search: we store a server-side search_index (encrypted
+        with a server key, not user key) — optional, off by default.
+
+    reply_to is a self-referencing FK for threaded replies.
+    """
+
+    class MessageType(models.TextChoices):#❔why I'm using nested class inside message class, what does it called?
+        TEXT = "text", "Text"
+        IMAGE = "image", "Image"
+        VIDEO = "video", "Video"
+        VOICE = "voice", "Voice Note"
+        FILE = "file", "File"
+        PDF = "pdf", "PDF"
+        DOCUMENT = "document", "Document"
+        SYSTEM = "system", "System"    # e.g. "X joined the group"
+
+    # ── Context: belongs to DM OR group, never both ──────────────
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="messages",
+        db_index=True,
+    )
+    # group FK — points to groupapp.Group
+    # Using string reference to avoid circular import
+    group = models.ForeignKey(
+        "groupapp.Group",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="messages",
+        db_index=True,
+    )
+
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="sent_messages",
+        db_index=True,
+    )
+
+    # ── Threading: reply to another message ──────────────────────
+    reply_to = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="replies",
+        help_text="The message this is a reply to",
+    )
+
+    # ── Content ──────────────────────────────────────────────────
+    message_type = models.CharField(
+        max_length=20,
+        choices=MessageType.choices,
+        default=MessageType.TEXT,
+    )
+    # E2E ciphertext — server never decrypts this
+    content_encrypted = models.TextField(
+        blank=True,
+        help_text="Client-side encrypted message content (ciphertext only)",
+    )
+    # Optional: plaintext ONLY for system messages (join/leave notifications)
+    # because those don't contain user content
+    system_text = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Used only for system messages (type=system) — plaintext is safe here",
+    )
+
+    # ── Soft delete ───────────────────────────────────────────────
+    is_deleted = models.BooleanField(default=False)
+    # deleted_for_everyone = True → hidden for ALL participants (like WhatsApp)
+    deleted_for_everyone = models.BooleanField(default=False)
+
+    # ── Pin ───────────────────────────────────────────────────────
+    is_pinned = models.BooleanField(default=False, db_index=True)
+
+    # ── Timestamps ────────────────────────────────────────────────
+    sent_at = models.DateTimeField(default=timezone.now, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "messages"
+        ordering = ["sent_at"]    # chronological inside a chat
+        indexes = [
+            # Composite: fetch all messages in a conversation, ordered by time
+            # This is the most frequent query — must be fast
+            models.Index(fields=["conversation", "sent_at"]),#❔why I'm passing two field on indexes where sometimes I pass only one field, how to know when to pass single or multiple,
+            models.Index(fields=["group", "sent_at"]),
+            models.Index(fields=["sender"]),
+            models.Index(fields=["is_pinned"]),
+        ]
+        constraints = [#❔what is this constraint, is it built in?explain this part 
+            # Enforce: message belongs to exactly one context
+            models.CheckConstraint(
+                check=(
+                    models.Q(conversation__isnull=True, group__isnull=False) |
+                    models.Q(conversation__isnull=False, group__isnull=True)
+                ),
+                name="message_belongs_to_one_context",
+            )
+        ]
+
+    def __str__(self):
+        ctx = f"Conv#{self.conversation_id}" if self.conversation_id else f"Group#{self.group_id}"
+        return f"Message#{self.pk} in {ctx} by {self.sender.username}"
+
+    def soft_delete(self, for_everyone: bool = False):
+        """
+        Soft-delete a message.
+        for_everyone=True → WhatsApp-style delete for all participants.
+        for_everyone=False → only hides for the sender (delete for me).
+        """
+        self.is_deleted = True
+        self.deleted_for_everyone = for_everyone
+        # Clear content on server so ciphertext is gone too
+        if for_everyone:
+            self.content_encrypted = ""
+        self.save(update_fields=["is_deleted", "deleted_for_everyone", "content_encrypted", "updated_at"])
 
 
 
+# ─────────────────────────────────────────────────────────────
+# MESSAGE FILE  (attachments — one message → many files)
+# ─────────────────────────────────────────────────────────────
+class MessageFile(models.Model):
+    """
+    Stores file attachments for messages.
+    One message can have multiple files (e.g. send 3 images at once).
 
+    file_url points to S3/R2 — never stored locally.
+    media_type tells the frontend how to render it.
+    """
 
+    class MediaType(models.TextChoices):
+        IMAGE = "image", "Image"
+        VIDEO = "video", "Video"
+        AUDIO = "audio", "Audio"
+        FILE = "file", "File"
+        PDF = "pdf", "PDF"
+        DOCUMENT = "document", "Document"#❔why here SYSTEM not present, like in message model?
 
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name="files",    # message.files.all()
+    )
+    file_name = models.CharField(max_length=255, blank=True)
+    # URL on S3/R2 — generated by presigned upload on client, sent here
+    file_url = models.CharField(max_length=500)
+    file_size = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text="File size in bytes",
+    )
+    media_type = models.CharField(max_length=20, choices=MediaType.choices)
+    # Duration in seconds for voice notes and videos
+    duration_seconds = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Duration for audio/video files in seconds",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        db_table = "message_files"
+        indexes = [
+            models.Index(fields=["message"]),    # "get all files for this message"
+        ]
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    def __str__(self):
+        return f"{self.media_type}: {self.file_name} (Message#{self.message_id})"
 
 
 
