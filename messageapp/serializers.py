@@ -49,11 +49,60 @@ class BlockCheckMixin:
                 "You cannot message this user."
             )
 
+# ─────────────────────────────────────────────────────────────
+# SENDER MINI PROFILE  (nested inside messages)
+# ─────────────────────────────────────────────────────────────
+class SenderSerializer(serializers.ModelSerializer):
+    """
+    Lightweight sender info shown on each message bubble.
+    Spec: Each message shows the person's image and name.
+    Only expose safe public fields — never email or phone here.
+    """
+
+    class Meta:
+        model = User
+        fields = ["id", "username", "profile_image"]
+        # All read-only — this is a nested read serializer
+        read_only_fields = ["id", "username", "profile_image"]
+
+# ─────────────────────────────────────────────────────────────
+# SENDER MINI PROFILE  (nested inside messages)
+# ─────────────────────────────────────────────────────────────
+class SenderSerializer(serializers.ModelSerializer):
+    """
+    Lightweight sender info shown on each message bubble.
+    Spec: Each message shows the person's image and name.
+    Only expose safe public fields — never email or phone here.
+    """
+
+    class Meta:
+        model = User
+        fields = ["id", "username", "profile_image"]
+        # All read-only — this is a nested read serializer
+        read_only_fields = ["id", "username", "profile_image"]
 
 
+# ─────────────────────────────────────────────────────────────
+# MESSAGE FILE  (nested in MessageSerializer)
+# ─────────────────────────────────────────────────────────────
+class MessageFileSerializer(serializers.ModelSerializer):
+    """
+    Serializes file attachments nested inside a message.
+    file_url is the S3/R2 URL — frontend uses it to render/download.
+    """
 
-
-
+    class Meta:
+        model = MessageFile
+        fields = [
+            "id",
+            "file_name",
+            "file_url",
+            "file_size",
+            "media_type",
+            "duration_seconds",   # for voice notes and videos
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at"]
 
 
 
