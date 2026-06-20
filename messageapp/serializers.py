@@ -106,6 +106,64 @@ class MessageFileSerializer(serializers.ModelSerializer):
 
 
 
+# ─────────────────────────────────────────────────────────────
+# MESSAGE REACTION  (nested in MessageSerializer)
+# ─────────────────────────────────────────────────────────────
+class MessageReactionSerializer(serializers.ModelSerializer):
+    """Emoji reactions on a message."""
+
+    reactor = SenderSerializer(source="user", read_only=True)#❔isn't it will be receiver, the person who receive message he'll react?
+
+    class Meta:
+        model = MessageReaction
+        fields = ["id", "emoji", "reactor", "created_at"]
+        read_only_fields = ["id", "reactor", "created_at"]
+
+
+
+# ─────────────────────────────────────────────────────────────
+# REPLY PREVIEW  (lightweight — shown inside a replied message)
+# ─────────────────────────────────────────────────────────────
+class ReplyPreviewSerializer(serializers.ModelSerializer):
+    """
+    Minimal info about the message being replied to.
+    We show only sender + a content snippet — not the full message tree.
+    Avoids infinite nesting (reply → reply → reply...).
+    """
+
+    sender = SenderSerializer(read_only=True)
+    # Show just a snippet of the original content
+    preview = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Message
+        fields = ["id", "sender", "message_type", "preview", "sent_at"]
+        read_only_fields = fields
+
+    def get_preview(self, obj):
+        """
+        For text: first 100 chars of encrypted content identifier.
+        For files: show the type label instead.
+        NOTE: actual decryption happens client-side — we just show type.
+        """
+        if obj.message_type == Message.MessageType.TEXT:
+            # We don't decrypt — just acknowledge there's a text reply
+            return "[Text message]"
+        return f"[{obj.get_message_type_display()}]"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
