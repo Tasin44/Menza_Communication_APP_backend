@@ -358,7 +358,36 @@ class MessageFile(models.Model):
         return f"{self.media_type}: {self.file_name} (Message#{self.message_id})"
 
 
+# ─────────────────────────────────────────────────────────────
+# MESSAGE REACTION
+# ─────────────────────────────────────────────────────────────
+class MessageReaction(models.Model):
+    """
+    Emoji reactions on messages.
+    One reaction per user per message (unique_together enforces this).
+    """
 
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name="reactions",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="message_reactions",
+    )
+    # Store the emoji character directly (e.g. "👍", "❤️")
+    emoji = models.CharField(max_length=10)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "message_reactions"
+        # One reaction per user per message — to change it, DELETE then POST
+        unique_together = [("message", "user")]#❔
+
+    def __str__(self):
+        return f"{self.user.username} reacted {self.emoji} to Message#{self.message_id}"
 
 
 
