@@ -19,6 +19,7 @@ Design decisions:
   - Soft delete: is_deleted flag, deleted_for_everyone flag
   - All PKs are BIGINT (BigAutoField) for scale
 """
+from rest_framework.fields import ModelField
 from django.db.models import constraints
 from os import read
 from operator import truediv
@@ -393,8 +394,101 @@ class MessageReaction(models.Model):
 
 
 
+# ─────────────────────────────────────────────────────────────
+# PINNED MESSAGE  (inside a chat or group)
+# ─────────────────────────────────────────────────────────────
+class PinnedMessage(models.Model):
+    """
+    Pin a specific message inside a conversation or group chat box.
+    Different from PinnedItem (which pins entire conversations to the dashboard).
+    """
+
+    # Context: pinned inside a DM or a group
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="pinned_messages",
+    )
+    group = models.ForeignKey(
+        "groupapp.Group",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="pinned_messages",
+    )
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name="pins",
+    )
+    pinned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="pinned_messages",
+    )
+    pinned_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "pinned_messages"
+        indexes = [
+            models.Index(fields=["conversation"]),
+            models.Index(fields=["group"]),
+        ]
+
+    def __str__(self):
+        return f"Pinned Message#{self.message_id} by {self.pinned_by.username}"
 
 
 
+# ─────────────────────────────────────────────────────────────
+# PINNED ITEM  (dashboard — max 5 per user)
+# ─────────────────────────────────────────────────────────────
+class PinnedItem(models.Model):
+    """
+    Pins a conversation, group, or channel to the TOP of the dashboard.
+    Spec: max 5 pins per user.
+    position 1–5, enforced by CHECK constraint + application logic.
+    """
 
+    class ItemType(models.TextChoices):
+        CONVERSATION = "conversation", "Conversation"
+        GROUP = "group", "Group"
+        CHANNEL = "channel", "Channel"
 
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="pinned_items",
+    )
+    item_type = models.CharField(max_length=20, choices=ItemType.choices)
+    # Generic FK pattern: store the ID of whatever is pinned
+    item_id = models.BigIntegerField()
+    # Position 1–5 on the dashboard
+    position = models.PositiveSmallIntegerField(
+        help_text="Pin position 1–5 on the dashboard",
+    )
+    pinned_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "pinned_items"
+        # Can't pin the same item twice
+        unique_together = [("user", "item_type", "item_id")]#❔how it is working
+        constraints = [
+            # Enforce max position = 5
+            models.CheckConstraint(
+                check=models.Q(position__gte=1, position__lte=5),
+                name="pin_position_1_to_5",
+            ),
+            # No two items at the same position for the same user
+            models.UniqueConstraint(#❔how it is working explain with example
+                fields=["user", "position"],
+                name="uq_pin_position_per_user",
+            ),
+        ]
+        indexes = [models.Index(fields=["user", "position"])]
+
+    def __str__(self):
+        return f"{self.user.username} pinned {self.item_type}#{self.item_id} at position {self.position}"
+        
