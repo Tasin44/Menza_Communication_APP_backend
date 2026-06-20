@@ -221,7 +221,231 @@ class MessageSerializer(serializers.ModelSerializer):
 
 
 
+# ─────────────────────────────────────────────────────────────
+# SEND MESSAGE  (write serializer — lean and flat)
+# ─────────────────────────────────────────────────────────────
+class SendMessageSerializer(BlockCheckMixin, serializers.Serializer):
+    """
+    Write serializer for sending a new message.
+    Kept flat (no nesting) for easy POST body.
 
+    Supports:
+      - DM: provide conversation_id
+      - Group: provide group_id
+      - File attachments: list of file objects
+      - Reply: provide reply_to_id
+    """
+
+    # Context: DM or group — exactly one required
+    conversation_id = serializers.IntegerField(required=False, allow_null=True)
+    group_id = serializers.IntegerField(required=False, allow_null=True)
+
+    # Reply to an existing message
+    reply_to_id = serializers.IntegerField(required=False, allow_null=True)
+
+    message_type = serializers.ChoiceField(
+        choices=Message.MessageType.choices,
+        default=Message.MessageType.TEXT,
+    )
+    # E2E ciphertext — required for text/voice, optional if it's a file-only message
+    content_encrypted = serializers.CharField(required=False, allow_blank=True)
+
+    # File attachments: list of {file_url, file_name, file_size, media_type, duration_seconds?}
+    files = serializers.ListField(
+        child=serializers.DictField(),#❔explain this , why ListField used, why child inside it
+        required=False,
+        default=list,
+        help_text="List of file objects with file_url, media_type, etc.",
+    )
+
+    def validate(self, attrs):#❔is attrs a list ? what is place I'm passing attrs on the validate method?where I'm calling this 
+        """
+        Top-level cross-field validation.
+        Ensures exactly one of conversation_id or group_id is provided.
+        Validates the user is a participant in the target.
+        """
+        conversation_id = attrs.get("conversation_id")
+        group_id = attrs.get("group_id")
+
+        # ── Rule 1: exactly one context ──────────────────────────
+        if not conversation_id and not group_id:
+            raise serializers.ValidationError(
+                "Provide either conversation_id or group_id."
+            )
+        if conversation_id and group_id:
+            raise serializers.ValidationError(
+                "Provide only one of conversation_id or group_id, not both."
+            )
+
+        # ── Rule 2: must have some content ───────────────────────
+        has_content = attrs.get("content_encrypted", "").strip()#❔why not i'm using bool here , like I did on has_files
+        has_files = bool(attrs.get("files"))
+        if not has_content and not has_files:
+            raise serializers.ValidationError(
+                "Message must have content or at least one file."
+            )
+
+        sender = self.context["request"].user
+
+        # ── Rule 3: validate DM conversation ─────────────────────
+        if conversation_id:
+            try:
+                conversation = Conversation.objects.get(id=conversation_id)
+            except Conversation.DoesNotExist:
+                raise serializers.ValidationError({"conversation_id": "Conversation not found."})
+
+            # Check sender is a participant
+            is_participant = ConversationParticipant.objects.filter(
+                conversation=conversation,
+                user=sender,
+                is_active=True,
+            ).exists()
+            if not is_participant:
+                raise serializers.ValidationError(
+                    {"conversation_id": "You are not part of this conversation."}
+                )
+
+            # Check block status between participants
+            # Get the OTHER participant
+            other_participant = ConversationParticipant.objects.filter(
+                conversation=conversation,
+                is_active=True,
+            ).exclude(user=sender).select_related("user").first()
+
+            if other_participant:
+                self._check_not_blocked(sender, other_participant.user)#why _ used before _check_not_blocked, is it means protected?
+
+            attrs["_conversation"] = conversation
+            attrs["_group"] = None#for conversation , group will be none 
+
+        # ── Rule 4: validate group membership ────────────────────
+        if group_id:
+            try:
+                from groupapp.models import Group, GroupMember
+                group = Group.objects.get(id=group_id)
+            except Exception:
+                raise serializers.ValidationError({"group_id": "Group not found."})
+
+            is_member = GroupMember.objects.filter(
+                group=group,
+                user=sender,
+            ).exists()
+            if not is_member:
+                raise serializers.ValidationError(
+                    {"group_id": "You are not a member of this group."}
+                )
+
+            attrs["_group"] = group
+            attrs["_conversation"] = None
+
+        # ── Rule 5: validate reply_to ─────────────────────────────
+        reply_to_id = attrs.get("reply_to_id")
+        if reply_to_id:
+            try:
+                reply_msg = Message.objects.get(
+                    id=reply_to_id,
+                    is_deleted=False,
+                )
+                attrs["_reply_to"] = reply_msg
+            except Message.DoesNotExist:
+                raise serializers.ValidationError(
+                    {"reply_to_id": "Message to reply to not found."}
+                )
+        else:
+            attrs["_reply_to"] = None
+
+        return attrs
+
+    def validate_files(self, files):
+        """Validate each file object has required fields."""
+        for f in files:
+            if "file_url" not in f:
+                raise serializers.ValidationError(
+                    "Each file must have a file_url."
+                )
+            if "media_type" not in f:
+                raise serializers.ValidationError(
+                    "Each file must have a media_type."
+                )
+            # if not f["file_url"].startswith("https://"):
+            #     raise serializers.ValidationError(
+            #         "file_url must be a valid HTTPS URL (upload to S3/R2 first)."
+            #     )
+        return files
+
+    @transaction.atomic
+    def save(self):
+        """
+        Creates the Message + MessageFile rows + MessageStatus rows.
+        Uses atomic transaction so partial saves don't corrupt data.
+        """
+        data = self.validated_data#❔from where this validated_data coming, I can't see any validated_data name field here 
+        sender = self.context["request"].user
+
+        # ── Create the message ────────────────────────────────────
+        message = Message.objects.create(
+            conversation=data["_conversation"],
+            group=data["_group"],
+            sender=sender,
+            reply_to=data.get("_reply_to"),
+            message_type=data["message_type"],
+            content_encrypted=data.get("content_encrypted", ""),
+        )
+
+        # ── Create file attachments ───────────────────────────────
+        file_objs = []
+        for f in data.get("files", []):
+            file_objs.append(MessageFile(
+                message=message,
+                file_name=f.get("file_name", ""),
+                file_url=f["file_url"],
+                file_size=f.get("file_size"),
+                media_type=f["media_type"],
+                duration_seconds=f.get("duration_seconds"),
+            ))
+        if file_objs:
+            # bulk_create: one INSERT for all files, not N inserts
+            MessageFile.objects.bulk_create(file_objs)
+
+        # ── Create MessageStatus rows (delivery tracking) ─────────
+        # For DM: one status row for the other participant
+        # For group: one row per member excluding sender
+        status_objs = []
+        if data["_conversation"]:
+            # Get the other participant(s)
+            recipients = ConversationParticipant.objects.filter(
+                conversation=data["_conversation"],
+                is_active=True,
+            ).exclude(user=sender).values_list("user_id", flat=True)#❔why values_list used here , flat true means?
+
+            for recipient_id in recipients:
+                status_objs.append(MessageStatus(
+                    message=message,
+                    recipient_id=recipient_id,
+                ))
+
+        elif data["_group"]:
+            from groupapp.models import GroupMember
+            recipients = GroupMember.objects.filter(
+                group=data["_group"],
+            ).exclude(user=sender).values_list("user_id", flat=True)
+
+            for recipient_id in recipients:
+                status_objs.append(MessageStatus(
+                    message=message,
+                    recipient_id=recipient_id,
+                ))
+
+        if status_objs:
+            # bulk_create: one INSERT regardless of group size
+            MessageStatus.objects.bulk_create(status_objs)
+
+        # ── Update conversation's last_message cache ───────────────
+        if data["_conversation"]:#❔from where this _conversation coming?I see the db table name conversations not conversation
+            preview_text = data.get("content_encrypted", "")
+            data["_conversation"].update_last_message(preview_text, message.sent_at)#update_last_message is the Conversations table method 
+
+        return message
  
 
 
