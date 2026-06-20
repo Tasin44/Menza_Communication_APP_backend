@@ -358,6 +358,68 @@ class MessageFile(models.Model):
     def __str__(self):
         return f"{self.media_type}: {self.file_name} (Message#{self.message_id})"
 
+# ─────────────────────────────────────────────────────────────
+# MESSAGE STATUS  (delivered / read receipts)
+# ─────────────────────────────────────────────────────────────
+class MessageStatus(models.Model):
+    """
+    Per-recipient delivery and read tracking.
+    One row per (message, recipient) pair.
+
+    For DMs: 2 users → 1 row (sender doesn't need a status for their own message).
+    For groups: N members → N-1 rows (one per recipient).
+
+    This powers the double-tick (✓✓) system.
+
+
+    MessageStatus has one row per (message, recipient) — this is how the double-tick system works. is_delivered = single tick, is_read = double blue tick.
+    """
+
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name="statuses",
+    )
+    # The recipient (not the sender)
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="message_receipts",
+    )
+
+    is_delivered = models.BooleanField(default=False)
+    is_read = models.BooleanField(default=False)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "message_status"
+        unique_together = [("message", "recipient")]
+        indexes = [
+            models.Index(fields=["message"]),
+            models.Index(fields=["recipient", "is_read"]),    # unread count query
+        ]
+
+    def __str__(self):
+        return f"Status(msg#{self.message_id} → {self.recipient.username})"
+
+    def mark_delivered(self):
+        if not self.is_delivered:
+            self.is_delivered = True
+            self.delivered_at = timezone.now()
+            self.save(update_fields=["is_delivered", "delivered_at"])
+
+    def mark_read(self):
+        if not self.is_read:
+            self.is_read = True
+            self.read_at = timezone.now()
+            # Reading implies delivery too
+            if not self.is_delivered:
+                self.is_delivered = True
+                self.delivered_at = self.read_at
+            self.save(update_fields=["is_read", "read_at", "is_delivered", "delivered_at"])
+
+
 
 # ─────────────────────────────────────────────────────────────
 # MESSAGE REACTION
@@ -450,6 +512,8 @@ class PinnedItem(models.Model):
     Pins a conversation, group, or channel to the TOP of the dashboard.
     Spec: max 5 pins per user.
     position 1–5, enforced by CHECK constraint + application logic.
+
+PinnedItem has both a CHECK constraint (position BETWEEN 1 AND 5) and a UniqueConstraint on (user, position) — two-layer enforcement so no two items share a slot.
     """
 
     class ItemType(models.TextChoices):
@@ -491,4 +555,56 @@ class PinnedItem(models.Model):
 
     def __str__(self):
         return f"{self.user.username} pinned {self.item_type}#{self.item_id} at position {self.position}"
+
+
+
+
+# ─────────────────────────────────────────────────────────────
+# ARCHIVED CONVERSATION  (per-user soft archive)
+# ─────────────────────────────────────────────────────────────
+class ArchivedConversation(models.Model):
+    """
+    Per-user archive of a conversation.
+    Archived conversations are hidden from the main list
+    but still accessible via an 'Archived' section.
+    This is user-specific — archiving doesn't affect the other person.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="archived_conversations",
+    )
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        related_name="archived_by",
+    )
+    archived_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "archived_conversations"
+        # Can't archive the same conversation twice
+        unique_together = [("user", "conversation")]
+
+    def __str__(self):
+        return f"{self.user.username} archived Conversation#{self.conversation_id}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         
