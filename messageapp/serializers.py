@@ -1,5 +1,7 @@
 
 
+from typing import Required
+from django.http import request
 from django.db import transaction
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
@@ -48,22 +50,6 @@ class BlockCheckMixin:
             raise serializers.ValidationError(
                 "You cannot message this user."
             )
-
-# ─────────────────────────────────────────────────────────────
-# SENDER MINI PROFILE  (nested inside messages)
-# ─────────────────────────────────────────────────────────────
-class SenderSerializer(serializers.ModelSerializer):
-    """
-    Lightweight sender info shown on each message bubble.
-    Spec: Each message shows the person's image and name.
-    Only expose safe public fields — never email or phone here.
-    """
-
-    class Meta:
-        model = User
-        fields = ["id", "username", "profile_image"]
-        # All read-only — this is a nested read serializer
-        read_only_fields = ["id", "username", "profile_image"]
 
 # ─────────────────────────────────────────────────────────────
 # SENDER MINI PROFILE  (nested inside messages)
@@ -153,16 +139,90 @@ class ReplyPreviewSerializer(serializers.ModelSerializer):
 
 
 
+# ─────────────────────────────────────────────────────────────
+# MESSAGE READ SERIALIZER  (full, with nested data)
+# ─────────────────────────────────────────────────────────────
+class MessageSerializer(serializers.ModelSerializer):
+    """
+    Full message representation for the chat page.
+    Uses select_related + prefetch_related in the view to avoid N+1.
+
+    Nested fields:
+      - sender: profile info
+      - files: list of attachments
+      - reactions: emoji reactions
+      - reply_to: preview of replied message
+      - is_read_by_me: personalised to the requesting user
+    """
+
+    sender = SenderSerializer(read_only=True)
+    files = MessageFileSerializer(many=True, read_only=True)
+    reactions = MessageReactionSerializer(many=True, read_only=True)
+    reply_to = ReplyPreviewSerializer(read_only=True)
+
+    # Personalised: did the current user read this message?
+    is_read_by_me = serializers.SerializerMethodField()
+    # How many people have read it (for group read receipts)
+    read_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Message
+        fields = [
+            "id",
+            "conversation",
+            "group",
+            "sender",
+            "reply_to",
+            "message_type",
+            "content_encrypted",   # ciphertext — client decrypts#❔what does ciphertext means 
+            "system_text",         # only set for system messages
+            "is_deleted",
+            "deleted_for_everyone",
+            "is_pinned",
+            "files",
+            "reactions",
+            "is_read_by_me",
+            "read_count",
+            "sent_at",
+            "updated_at",
+        ]
+        read_only_fields = fields   # this is a READ serializer only
+
+    def get_is_read_by_me(self, obj):
+        """
+        Returns True if the current user has read this message.
+        Uses prefetched statuses to avoid extra DB queries.
+        """
+        request = self.context.get("request")
+        if not request:
+            return False
+        user = request.user
+        # Use prefetched data if available (set in view)
+        if hasattr(obj, "prefetched_statuses"):#❔explain it, how it is working 
+            return any(
+                s.recipient_id == user.id and s.is_read
+                for s in obj.prefetched_statuses
+            )
+        # Fallback DB query (only hits if prefetch wasn't done)
+        return MessageStatus.objects.filter(
+            message=obj,
+            recipient=user,
+            is_read=True,
+        ).exists()
+
+    def get_read_count(self, obj):
+        """
+        For group messages: how many members have read this.
+        Uses prefetched statuses.
+        """
+        if hasattr(obj, "prefetched_statuses"):#❔explain whole part 
+            return sum(1 for s in obj.prefetched_statuses if s.is_read)
+        return MessageStatus.objects.filter(message=obj, is_read=True).count()
 
 
 
 
-
-
-
-
-
-
+ 
 
 
 
