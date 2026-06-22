@@ -449,7 +449,26 @@ class SendMessageSerializer(BlockCheckMixin, serializers.Serializer):
  
 
 
+# ─────────────────────────────────────────────────────────────
+# CONVERSATION PARTICIPANT  (mute state per user)
+# ─────────────────────────────────────────────────────────────
+class ConversationParticipantSerializer(serializers.ModelSerializer):
+    """Serializes participant info including their mute state."""
 
+    user = SenderSerializer(read_only=True)
+
+    class Meta:
+        model = ConversationParticipant
+        fields = [
+            "id",
+            "user",
+            "is_muted",
+            "muted_until",
+            "last_read_message_id",
+            "is_active",
+            "joined_at",
+        ]
+        read_only_fields = ["id", "user", "joined_at"]
 
 
 
