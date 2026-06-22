@@ -404,9 +404,24 @@ class ConversationActionView(BaseMessagingView):
 
 
 
+    def _archive(self, request, pk):
+        """Archive conversation — hides from main list but keeps history."""
+        conversation = self.get_conversation_or_403(pk, request.user)
+        if not conversation:
+            return self.not_found()
 
+        ArchivedConversation.objects.get_or_create(
+            user=request.user,
+            conversation=conversation,
+        )
+        return self.ok({}, "Conversation archived.")
 
-
+    def _unarchive(self, request, pk):
+        ArchivedConversation.objects.filter(
+            user=request.user,
+            conversation_id=pk,
+        ).delete()
+        return self.ok({}, "Conversation unarchived.")
 
 
 
