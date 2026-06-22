@@ -342,7 +342,65 @@ class ConversationDetailView(BaseMessagingView):
 
 
 
+# ─────────────────────────────────────────────────────────────
+# CONVERSATION ACTIONS  (mute / block / archive)
+# ─────────────────────────────────────────────────────────────
+class ConversationActionView(BaseMessagingView):
+    """
+    POST /api/messages/conversations/<id>/mute/
+    POST /api/messages/conversations/<id>/unmute/
+    POST /api/messages/conversations/<id>/block/
+    POST /api/messages/conversations/<id>/archive/
+    POST /api/messages/conversations/<id>/unarchive/
 
+    All are per-user actions — don't affect the other participant.
+    """
+
+    def post(self, request, pk, action):
+        """
+        Dispatch to appropriate action handler.
+        Using a dispatch dict instead of long if/elif.
+        """
+        dispatch = {
+            "mute": self._mute,
+            "unmute": self._unmute,
+            "block": self._block,
+            "archive": self._archive,
+            "unarchive": self._unarchive,
+        }
+        handler = dispatch.get(action)
+        if not handler:
+            return self.bad_request({}, f"Unknown action: {action}")
+
+        return handler(request, pk)
+
+    def _mute(self, request, pk):
+        """Mute notifications for this conversation."""
+        serializer = MuteConversationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            participant = ConversationParticipant.objects.get(
+                conversation_id=pk,
+                user=request.user,
+            )
+        except ConversationParticipant.DoesNotExist:
+            return self.not_found()
+
+        participant.mark_muted(until=serializer.validated_data.get("muted_until"))
+        return self.ok({}, "Conversation muted.")
+
+    def _unmute(self, request, pk):
+        try:
+            participant = ConversationParticipant.objects.get(
+                conversation_id=pk,
+                user=request.user,
+            )
+        except ConversationParticipant.DoesNotExist:
+            return self.not_found()
+
+        participant.unmute()
+        return self.ok({}, "Conversation unmuted.")
 
 
 
