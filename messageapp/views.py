@@ -424,7 +424,95 @@ class ConversationActionView(BaseMessagingView):
         return self.ok({}, "Conversation unarchived.")
 
 
+# ─────────────────────────────────────────────────────────────
+# MESSAGE LIST  (chat page — paginated)
+# ─────────────────────────────────────────────────────────────
+class MessageListView(BaseMessagingView):
+    """
+    GET /api/messages/conversations/<id>/messages/
 
+    Returns paginated messages for a conversation.
+    Newest first (cursor pagination), client scrolls up for older.
+
+    Uses heavy prefetching to avoid N+1 on nested serializer fields:
+      - files (MessageFile)
+      - reactions (MessageReaction → user)
+      - statuses (MessageStatus)
+      - reply_to (Message → sender)
+    """
+
+    def get(self, request, pk):
+        # ── Authorization ─────────────────────────────────────────
+        conversation = self.get_conversation_or_403(pk, request.user)
+        if not conversation:
+            return self.not_found("Conversation not found.")
+
+        # ── Queryset with all prefetches ──────────────────────────
+        messages = Message.objects.filter(#❔how it is working 
+            conversation=conversation,
+            # Deleted for everyone → hide completely
+            # Deleted for me → still visible to others
+            # We handle "deleted for me" on client side using local storage
+        ).filter(
+            # Exclude messages deleted for everyone
+            Q(is_deleted=False) | Q(deleted_for_everyone=False)
+        ).select_related(
+            "sender",          # JOIN users → avoids N+1 on sender profile
+            "reply_to__sender",  # JOIN messages JOIN users for reply preview
+        ).prefetch_related(
+            Prefetch(
+                "files",
+                queryset=MessageFile.objects.all(),
+                to_attr="prefetched_files",   # used by MessageFileSerializer
+            ),
+            Prefetch(
+                "reactions",
+                queryset=MessageReaction.objects.select_related("user"),
+                to_attr="prefetched_reactions",
+            ),
+            Prefetch(
+                "statuses",
+                queryset=MessageStatus.objects.all(),
+                to_attr="prefetched_statuses",  # used by is_read_by_me
+            ),
+        )
+
+        # ── Optional: search inside conversation ──────────────────
+        search = request.query_params.get("q", "").strip()
+        if search:
+            # Full-text search on message_text index
+            # For E2E encrypted messages this is limited — add search index separately
+            messages = messages.filter(
+                system_text__icontains=search
+            )
+
+        # ── Cursor pagination ─────────────────────────────────────
+        paginator = MessageCursorPagination()
+        page = paginator.paginate_queryset(messages, request)
+
+        serializer = MessageSerializer(
+            page,
+            many=True,
+            context={"request": request},
+        )
+
+        # ── Mark messages as delivered on fetch ───────────────────
+        # When user loads messages, mark them all as delivered
+        # (read happens when they actually view them — tracked by WS)
+        self._bulk_mark_delivered(conversation, request.user)
+
+        return paginator.get_paginated_response(serializer.data)
+
+    def _bulk_mark_delivered(self, conversation, user):
+        """
+        Mark all undelivered messages in this conversation as delivered.
+        Single UPDATE query — not N updates.
+        """
+        MessageStatus.objects.filter(
+            message__conversation=conversation,
+            recipient=user,
+            is_delivered=False,
+        ).update(is_delivered=True, delivered_at=timezone.now())
 
 
 
