@@ -842,6 +842,62 @@ class MuteConversationSerializer(serializers.Serializer):
     )
 
 
+# ─────────────────────────────────────────────────────────────
+# REACT TO MESSAGE
+# ─────────────────────────────────────────────────────────────
+class MessageReactionWriteSerializer(serializers.Serializer):
+    """Add or update an emoji reaction on a message."""
+
+    emoji = serializers.CharField(max_length=10)
+
+    def save(self, message, user):
+        """
+        Upsert pattern: if user already reacted, update the emoji.
+        If not, create a new reaction.
+        """
+        reaction, created = MessageReaction.objects.update_or_create(
+            message=message,
+            user=user,
+            defaults={"emoji": self.validated_data["emoji"]},
+        )
+        return reaction, created
+
+
+
+# ─────────────────────────────────────────────────────────────
+# PINNED ITEM  (dashboard pins)
+# ─────────────────────────────────────────────────────────────
+class PinnedItemSerializer(serializers.ModelSerializer):
+    """Serialize a user's dashboard pin."""
+
+    class Meta:
+        model = PinnedItem
+        fields = ["id", "item_type", "item_id", "position", "pinned_at"]
+        read_only_fields = ["id", "pinned_at"]
+
+    def validate_position(self, value):
+        if not 1 <= value <= 5:
+            raise serializers.ValidationError("Position must be between 1 and 5.")
+        return value
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+        # Enforce max 5 pins
+        current_count = PinnedItem.objects.filter(user=user).count()
+        if current_count >= 5 and not self.instance:    # creating new, not updating
+            raise serializers.ValidationError(
+                "You can pin a maximum of 5 items to the dashboard."
+            )
+        return attrs
+
+    def create(self, validated_data):
+        user = self.context["request"].user
+        return PinnedItem.objects.create(user=user, **validated_data)
+
+
+
+
+
 
 
 
