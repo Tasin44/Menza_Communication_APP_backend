@@ -293,7 +293,52 @@ class ConversationListCreateView(BaseMessagingView):
             message="Conversation started." if created else "Existing conversation returned.",
         )
 
+# ─────────────────────────────────────────────────────────────
+# CONVERSATION DETAIL
+# ─────────────────────────────────────────────────────────────
+class ConversationDetailView(BaseMessagingView):
+    """
+    GET    /api/messages/conversations/<id>/
+           Full conversation info: other person, pinned messages, media.
 
+    DELETE /api/messages/conversations/<id>/
+           Soft-delete this conversation for the requesting user only.
+           (Other participant is not affected.)
+    """
+
+    def get(self, request, pk):
+        conversation = self.get_conversation_or_403(pk, request.user)
+        if not conversation:
+            return self.not_found("Conversation not found.")
+
+        serializer = ConversationDetailSerializer(
+            conversation,
+            context={"request": request},
+        )
+        return self.ok(serializer.data)
+
+    def delete(self, request, pk):
+        """
+        Soft-delete: marks the participant row as inactive.
+        The conversation still exists for the other person.
+        """
+        try:
+            participant = ConversationParticipant.objects.get(
+                conversation_id=pk,
+                user=request.user,
+                is_active=True,
+            )
+        except ConversationParticipant.DoesNotExist:
+            return self.not_found("Conversation not found.")
+
+        participant.is_active = False
+        participant.left_at = timezone.now()
+        participant.save(update_fields=["is_active", "left_at"])
+
+        return Response(
+            {"success": True, "message": "Conversation deleted."},
+            status=status.HTTP_204_NO_CONTENT,
+        )
 
 
 
