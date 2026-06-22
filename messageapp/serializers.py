@@ -826,7 +826,20 @@ class CreateConversationSerializer(BlockCheckMixin, serializers.Serializer):
         return conversation, True   # (conversation, created)
 
 
+# ─────────────────────────────────────────────────────────────
+# MUTE CONVERSATION
+# ─────────────────────────────────────────────────────────────
+class MuteConversationSerializer(serializers.Serializer):
+    """
+    Mute a conversation for the current user only.
+    muted_until = None means mute until manually unmuted.
+    """
 
+    muted_until = serializers.DateTimeField(
+        required=False,
+        allow_null=True,
+        help_text="ISO timestamp. NULL = mute forever until unmuted.",
+    )
 
 
 
