@@ -480,5 +480,22 @@ class PresenceConsumer(AsyncWebsocketConsumer):
         # Notify contacts this user is online
         await self._notify_contacts_presence(True)
 
+    async def disconnect(self, close_code):
+        if hasattr(self, "user_group"):
+            await self.channel_layer.group_discard(self.user_group, self.channel_name)
+        if hasattr(self, "user"):
+            await self._set_online(False)
+            await self._notify_contacts_presence(False)
 
+    async def receive(self, text_data):
+        """Presence consumer doesn't handle incoming messages."""
+        pass
 
+    async def user_presence(self, event):
+        """Forward presence update to this client."""
+        await self.send(text_data=json.dumps({
+            "event": "presence",
+            "user_id": event["user_id"],
+            "is_online": event["is_online"],
+            "last_seen": event.get("last_seen"),
+        }))
