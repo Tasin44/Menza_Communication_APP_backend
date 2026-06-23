@@ -327,4 +327,25 @@ class ChatConsumer(AsyncWebsocketConsumer):
         }))
 
 
+    async def chat_typing(self, event):
+        """Forward typing indicator to this client."""
+        # Don't send typing indicator back to the typer themselves
+        if event["user_id"] == self.user.id:
+            return
+        await self.send(text_data=json.dumps({
+            "event": "typing",
+            "user_id": event["user_id"],
+            "username": event["username"],
+            "is_typing": event["is_typing"],
+        }))
 
+    async def message_read(self, event):
+        """Forward read receipt to this client."""
+        await self.send(text_data=json.dumps({
+            "event": "message_read",
+            "message_id": event["message_id"],
+            "read_by_user_id": event["read_by_user_id"],
+            "read_at": event["read_at"],
+        }))
+
+        
