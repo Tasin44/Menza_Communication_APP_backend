@@ -348,4 +348,29 @@ class ChatConsumer(AsyncWebsocketConsumer):
             "read_at": event["read_at"],
         }))
 
-        
+    async def message_delivered(self, event):
+        """Forward delivery receipt to this client."""
+        await self.send(text_data=json.dumps({
+            "event": "message_delivered",
+            "message_id": event["message_id"],
+            "delivered_to_user_id": event["delivered_to_user_id"],
+            "delivered_at": event["delivered_at"],
+        }))
+
+    async def message_reaction(self, event):
+        """Forward reaction event to this client."""
+        await self.send(text_data=json.dumps({
+            "event": "reaction",
+            "message_id": event["message_id"],
+            "user_id": event["user_id"],
+            "emoji": event["emoji"],
+        }))
+
+    async def message_deleted(self, event):
+        """Forward delete event — client should remove/grey out the message."""
+        await self.send(text_data=json.dumps({
+            "event": "message_deleted",
+            "message_id": event["message_id"],
+            "deleted_by": event["deleted_by"],
+            "for_everyone": event["for_everyone"],
+        }))
