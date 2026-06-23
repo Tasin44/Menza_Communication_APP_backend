@@ -322,7 +322,88 @@ class GroupAdminPermission(models.Model):
 
 
 
+# ─────────────────────────────────────────────────────────────
+# PERMISSION RESOLVER  (single source of truth — pure OOP, no Django state)
+# ─────────────────────────────────────────────────────────────
+class GroupPermissionResolver:
+    """
+    Decides "can this member do X?" for every group action.
 
+    Why a plain class and not just methods on GroupMember?
+    Because resolving a permission sometimes needs to look at a SECOND
+    member (e.g. "can A kick B?" depends on both A's and B's roles), and
+    putting two-member logic on a single-member model gets confusing fast.
+    This class takes the actor (and optionally a target) and answers
+    one question per method — easy to unit test, easy to reuse in
+    views.py, serializers.py and consumers.py without re-deriving the rule.
+    """
+
+    def __init__(self, actor: GroupMember):
+        self.actor = actor
+
+    # ── cached lookup of the actor's custom permission grid ───────
+    @property
+    def _grid(self) -> GroupAdminPermission | None:
+        if not hasattr(self, "_grid_cache"):
+            self._grid_cache = GroupAdminPermission.objects.filter(
+                group=self.actor.group, admin_user=self.actor.user
+            ).first()
+        return self._grid_cache
+
+    def _check(self, flag_name: str) -> bool:
+        """
+        Resolution order:
+          1. Owner            → always True
+          2. Moderator        → True for everything except admin removal
+          3. Admin             → check their personal permission grid
+          4. Plain member      → False
+        """
+        if self.actor.is_owner:
+            return True
+        if self.actor.role == GroupMember.Role.MODERATOR:
+            return flag_name != "can_delete_admins"
+        if self.actor.role == GroupMember.Role.ADMIN:
+            return bool(self._grid and getattr(self._grid, flag_name, False))
+        return False
+
+    def can_change_group_info(self) -> bool:
+        return self._check("can_change_group_info")
+
+    def can_delete_messages(self) -> bool:
+        return self._check("can_delete_messages")
+
+    def can_add_admins(self) -> bool:
+        return self._check("can_add_admins")
+
+    def can_delete_admins(self) -> bool:
+        return self._check("can_delete_admins")
+
+    def can_delete_group(self) -> bool:
+        return self._check("can_delete_group")
+
+    def can_remove_member(self, target: GroupMember) -> bool:
+        """
+        General kick rule:
+          - Owner can remove anyone (except themself — they must transfer).
+          - Moderator can remove members and other moderators, never admins.
+          - Admin can remove members/moderators, and other admins only if
+            can_delete_admins is True.
+          - A member can never remove anyone.
+        """
+        if target.is_owner:
+            return False   # nobody can kick the owner
+        if self.actor.is_owner:
+            return True
+        if target.role == GroupMember.Role.ADMIN:
+            return self.can_delete_admins()
+        if self.actor.has_elevated_access:
+            return True
+        return False
+
+    def can_post_in_broadcast_mode(self) -> bool:
+        """Used when a group is set to 'broadcast-only' (admins post,
+        members read) — same resolution as has_elevated_access."""
+        return self.actor.has_elevated_access
 
 
 
