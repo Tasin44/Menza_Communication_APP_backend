@@ -402,3 +402,25 @@ class ChatConsumer(AsyncWebsocketConsumer):
         User.objects.filter(id=self.user.id).update(**updates)
 
 
+    @database_sync_to_async
+    def _mark_existing_as_delivered(self):
+        """
+        When a user connects, mark all undelivered messages in this
+        conversation as delivered.
+        """
+        from .models import MessageStatus
+        from django.utils import timezone as tz
+        now = tz.now()
+        # Bulk update — one SQL UPDATE instead of N updates
+        MessageStatus.objects.filter(
+            message__conversation_id=self.conversation_id,
+            recipient=self.user,
+            is_delivered=False,
+        ).update(is_delivered=True, delivered_at=now)
+
+
+
+
+
+
+
