@@ -674,6 +674,42 @@ class MessageDetailView(BaseMessagingView):
 
 
 
+# ─────────────────────────────────────────────────────────────
+# MESSAGE SEARCH
+# ─────────────────────────────────────────────────────────────
+class MessageSearchView(BaseMessagingView):
+    """
+    GET /api/messages/conversations/<id>/search/?q=<text>
+
+    Spec: User can search text messages of a conversation.
+    NOTE: For E2E encrypted messages, full-text search is limited server-side.
+    This searches system_text (system messages) and indexes if provided.
+    True search in E2E apps is done client-side after decryption.
+    """
+
+    def get(self, request, pk):
+        conversation = self.get_conversation_or_403(pk, request.user)
+        if not conversation:
+            return self.not_found()#❔how does this not_found working is it built in
+
+        query = request.query_params.get("q", "").strip()#❔
+        if len(query) < 2:
+            return self.bad_request({}, "Search query must be at least 2 characters.")
+
+        # Search only in system_text (unencrypted) for now
+        # For real E2E apps: client downloads messages and searches locally
+        messages = Message.objects.filter(
+            conversation=conversation,
+            is_deleted=False,
+            system_text__icontains=query,
+        ).select_related("sender").order_by("-sent_at")[:50]
+
+        serializer = MessageSerializer(messages, many=True, context={"request": request})
+        return self.ok({
+            "query": query,
+            "count": len(serializer.data),
+            "results": serializer.data,
+        })
 
 
 
