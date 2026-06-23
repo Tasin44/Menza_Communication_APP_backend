@@ -181,7 +181,41 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         logger.info(f"User {getattr(self, 'user', 'unknown')} disconnected")
 
+    async def receive(self, text_data):
+        """
+        Called when client sends a message over the WebSocket.
+        We use a dispatch pattern: action field determines which
+        handler method is called.
 
+        Expected JSON structure:
+        {
+            "action": "send_message" | "typing" | "read" | "react" | "delete",
+            ...action-specific fields...
+        }
+        """
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError:
+            await self._send_error("Invalid JSON")
+            return
+
+        action = data.get("action")
+
+        # ── Dispatch table (replaces long if/elif chain) ──────────
+        dispatch = {
+            "send_message": self._handle_send_message,
+            "typing": self._handle_typing,
+            "read": self._handle_read_receipt,
+            "react": self._handle_reaction,
+            "delete": self._handle_delete,
+        }
+
+        handler = dispatch.get(action)
+        if not handler:
+            await self._send_error(f"Unknown action: {action}")
+            return
+
+        await handler(data)
 
 
 
