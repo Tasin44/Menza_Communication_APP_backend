@@ -516,7 +516,80 @@ class MessageListView(BaseMessagingView):
 
 
 
+# ─────────────────────────────────────────────────────────────
+# SEND MESSAGE
+# ─────────────────────────────────────────────────────────────
+class SendMessageView(BaseMessagingView):
+    """
+    POST /api/messages/send/
 
+    Creates a message in DB then broadcasts via WebSocket.
+    Supports: text, voice, image, video, file, pdf, document.
+    Supports: replies (reply_to_id).
+    Supports: multiple file attachments.
+    """
+
+    @transaction.atomic#❔whats the impact of this here why used 
+    def post(self, request):
+        serializer = SendMessageSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)#❔sendmessageserializer has two method validate and validate_files, then which one is calling by is_valid here ?
+        message = serializer.save()
+
+        # ── Reload with all related data for response ─────────────
+        message = Message.objects.select_related(#❔how it's working why used here 
+            "sender",
+            "reply_to__sender",
+        ).prefetch_related(
+            "files", "reactions", "statuses"
+        ).get(id=message.id)
+
+        # ── Broadcast via WebSocket ───────────────────────────────
+        # All participants in the conversation room receive this
+        if message.conversation_id:#❔how does this below part working 
+            self.broadcast_to_conversation(
+                message.conversation_id,
+                {
+                    "type": "chat.message",   # maps to chat_message in consumer
+                    "message_id": message.id,
+                    "sender_id": request.user.id,
+                    "sender_username": request.user.username,
+                    "sender_image": request.user.profile_image,
+                    "content_encrypted": message.content_encrypted,
+                    "message_type": message.message_type,
+                    "files": [
+                        {"file_url": f.file_url, "media_type": f.media_type}
+                        for f in message.files.all()
+                    ],
+                    "reply_to_id": message.reply_to_id,
+                    "sent_at": message.sent_at.isoformat(),
+                },
+            )
+
+            # ── Push notification to offline users ────────────────
+            # Get recipients who are NOT currently in the WS room
+            # They'll receive a push notification via FCM/APNs
+            self._send_push_notifications(message)
+
+        response_serializer = MessageSerializer(
+            message,
+            context={"request": request},
+        )
+        return self.created(response_serializer.data, "Message sent.")
+
+    def _send_push_notifications(self, message):
+        """
+        Send push notifications to offline recipients.
+        TODO: Integrate with FCM (Android) / APNs (iOS) via celery task.
+        """
+        # Placeholder — wire up your push notification service here
+        # from notifications.tasks import send_push_notification
+        # recipients = MessageStatus.objects.filter(message=message, is_delivered=False)
+        # for r in recipients:
+        #     send_push_notification.delay(r.recipient_id, "New message")
+        pass
 
 
 
