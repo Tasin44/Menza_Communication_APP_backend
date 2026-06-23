@@ -499,3 +499,38 @@ class PresenceConsumer(AsyncWebsocketConsumer):
             "is_online": event["is_online"],
             "last_seen": event.get("last_seen"),
         }))
+
+    @database_sync_to_async
+    def _set_online(self, is_online: bool):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        updates = {"is_online": is_online}
+        if not is_online:
+            updates["last_seen"] = timezone.now()
+        User.objects.filter(id=self.user.id).update(**updates)
+
+    @database_sync_to_async
+    def _get_contact_user_ids(self):
+        """Get IDs of users who have this user in their contacts."""
+        from authapp.models import Contact
+        return list(
+            Contact.objects.filter(
+                contact_user=self.user
+            ).values_list("owner_id", flat=True)
+        )
+
+    async def _notify_contacts_presence(self, is_online: bool):
+        """
+        Push presence update to all contacts of this user.
+        Each contact is in their own "user_{id}" group.
+        """
+        contact_ids = await self._get_contact_user_ids()
+        payload = {
+            "type": "user.presence",
+            "user_id": self.user.id,
+            "is_online": is_online,
+            "last_seen": timezone.now().isoformat() if not is_online else None,
+        }
+        # Send to each contact's personal room — O(n) but runs in background
+        for contact_id in contact_ids:
+            await self.channel_layer.group_send(f"user_{contact_id}", payload)
