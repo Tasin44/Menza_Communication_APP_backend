@@ -712,4 +712,58 @@ class MessageSearchView(BaseMessagingView):
         })
 
 
+# ─────────────────────────────────────────────────────────────
+# READ RECEIPT  (REST fallback — WebSocket is primary)
+# ─────────────────────────────────────────────────────────────
+class MessageReadReceiptView(BaseMessagingView):
+    """
+    POST /api/messages/conversations/<id>/read/
+    Body: { "last_message_id": <id> }
 
+    Marks all messages up to last_message_id as read.
+    REST fallback for when WebSocket is not connected.
+    """
+
+    @transaction.atomic
+    def post(self, request, pk):
+        conversation = self.get_conversation_or_403(pk, request.user)
+        if not conversation:
+            return self.not_found()
+
+        last_message_id = request.data.get("last_message_id")
+        if not last_message_id:
+            return self.bad_request({}, "last_message_id is required.")
+
+        now = timezone.now()
+
+        # ── Bulk update: mark all statuses up to this message ─────
+        updated = MessageStatus.objects.filter(
+            message__conversation=conversation,
+            message__id__lte=last_message_id,    # all messages up to here
+            recipient=request.user,
+            is_read=False,
+        ).update(
+            is_read=True,
+            read_at=now,
+            is_delivered=True,
+            delivered_at=now,
+        )
+
+        # ── Update last_read_message_id on participant ─────────────
+        ConversationParticipant.objects.filter(
+            conversation=conversation,
+            user=request.user,
+        ).update(last_read_message_id=last_message_id)
+
+        # ── Notify sender via WebSocket ───────────────────────────
+        self.broadcast_to_conversation(
+            pk,
+            {
+                "type": "message.read",
+                "message_id": last_message_id,
+                "read_by_user_id": request.user.id,
+                "read_at": now.isoformat(),
+            },
+        )
+
+        return self.ok({"messages_marked_read": updated})
