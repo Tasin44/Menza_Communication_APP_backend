@@ -767,3 +767,85 @@ class MessageReadReceiptView(BaseMessagingView):
         )
 
         return self.ok({"messages_marked_read": updated})
+
+
+
+
+# ─────────────────────────────────────────────────────────────
+# EMOJI REACTION
+# ─────────────────────────────────────────────────────────────
+class MessageReactionView(BaseMessagingView):
+    """
+    POST   /api/messages/<id>/react/       → add/update reaction { emoji }
+    DELETE /api/messages/<id>/react/       → remove reaction
+    """
+
+    def _get_message(self, pk, user):
+        """Get message and verify user is in its conversation."""
+        try:
+            msg = Message.objects.select_related("conversation").get(
+                id=pk, is_deleted=False
+            )
+        except Message.DoesNotExist:
+            return None, self.not_found()
+
+        if msg.conversation_id:
+            allowed = ConversationParticipant.objects.filter(
+                conversation_id=msg.conversation_id,
+                user=user,
+                is_active=True,
+            ).exists()
+            if not allowed:
+                return None, self.forbidden()
+
+        return msg, None
+
+    def post(self, request, pk):
+        message, err = self._get_message(pk, request.user)
+        if err:
+            return err
+
+        serializer = MessageReactionWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        reaction, created = serializer.save(message=message, user=request.user)
+
+        # ── Broadcast reaction via WebSocket ──────────────────────
+        if message.conversation_id:
+            self.broadcast_to_conversation(
+                message.conversation_id,
+                {
+                    "type": "message.reaction",
+                    "message_id": message.id,
+                    "user_id": request.user.id,
+                    "emoji": reaction.emoji,
+                },
+            )
+
+        return self.created(
+            {"emoji": reaction.emoji},
+            "Reaction added." if created else "Reaction updated.",
+        )
+
+    def delete(self, request, pk):
+        message, err = self._get_message(pk, request.user)
+        if err:
+            return err
+
+        deleted, _ = MessageReaction.objects.filter(#❔why deleted, _ sometimes message,err used?how to know which one I've to use 
+            message=message,
+            user=request.user,
+        ).delete()
+
+        if not deleted:
+            return self.not_found("You haven't reacted to this message.")
+
+        return Response(
+            {"success": True, "message": "Reaction removed."},
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+
+
+
+
