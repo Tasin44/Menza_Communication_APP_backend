@@ -418,7 +418,23 @@ class ChatConsumer(AsyncWebsocketConsumer):
             is_delivered=False,
         ).update(is_delivered=True, delivered_at=now)
 
+    @database_sync_to_async
+    def _mark_message_read(self, message_id: int):
+        """Mark a specific message as read by the current user."""
+        from .models import MessageStatus
+        from django.utils import timezone as tz
+        now = tz.now()
+        MessageStatus.objects.filter(
+            message_id=message_id,
+            recipient=self.user,
+        ).update(is_read=True, read_at=now, is_delivered=True, delivered_at=now)
 
+    async def _send_error(self, message: str):
+        """Send an error event back to this client."""
+        await self.send(text_data=json.dumps({
+            "event": "error",
+            "message": message,
+        }))
 
 
 
