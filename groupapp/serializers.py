@@ -203,3 +203,32 @@ class AddMemberSerializer(serializers.Serializer):
     def save(self, group: Group):
         target = User.objects.get(id=self.validated_data["user_id"])
         return GroupMember.add(group, target, role=GroupMember.Role.MEMBER)
+
+# ─────────────────────────────────────────────────────────────
+# CHANGE MEMBER ROLE  (promote/demote + permission grant)
+# ─────────────────────────────────────────────────────────────
+class ChangeMemberRoleSerializer(serializers.Serializer):
+    """
+    Spec: "the existing admin can provide the new one this permission"
+    — role change + permission grid are submitted together.
+    """
+
+    role = serializers.ChoiceField(choices=GroupMember.Role.choices)
+    permissions = GroupAdminPermissionSerializer(required=False)
+
+    @transaction.atomic
+    def save(self, target_member: GroupMember, granted_by_user):
+        new_role = self.validated_data["role"]
+        target_member.promote(new_role)
+
+        if new_role == GroupMember.Role.ADMIN:
+            perms = self.validated_data.get("permissions", {})
+            GroupAdminPermission.objects.update_or_create(
+                group=target_member.group,
+                admin_user=target_member.user,
+                defaults={**perms, "granted_by": granted_by_user},
+            )
+        return target_member
+
+
+
