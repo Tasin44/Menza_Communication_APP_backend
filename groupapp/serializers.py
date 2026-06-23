@@ -231,4 +231,45 @@ class ChangeMemberRoleSerializer(serializers.Serializer):
         return target_member
 
 
+# ─────────────────────────────────────────────────────────────
+# SEND GROUP MESSAGE  (thin wrapper around messageapp.Message)
+# ─────────────────────────────────────────────────────────────
+class SendGroupMessageSerializer(serializers.Serializer):
+    """
+    Reuses the unified messageapp.Message table — a group message is just
+    a Message row with group set instead of conversation.
+    Files are pre-uploaded to S3/R2 by the client; we only persist URLs.
+    """
 
+    message_type = serializers.ChoiceField(choices=Message.MessageType.choices, default=Message.MessageType.TEXT)
+    content_encrypted = serializers.CharField(required=False, allow_blank=True)
+    reply_to_id = serializers.IntegerField(required=False, allow_null=True)
+    files = serializers.ListField(child=serializers.DictField(), required=False, default=list)
+
+    @transaction.atomic
+    def save(self, group: Group, sender):
+        data = self.validated_data
+        message = Message.objects.create(
+            group=group,
+            sender=sender,
+            message_type=data["message_type"],
+            content_encrypted=data.get("content_encrypted", ""),
+            reply_to_id=data.get("reply_to_id"),
+        )
+
+        if data.get("files"):
+            MessageFile.objects.bulk_create([
+                MessageFile(message=message, **f) for f in data["files"]
+            ])
+
+        # Fan out delivery-receipt rows for every OTHER active member —
+        # mirrors MessageStatus usage in messageapp for DMs.
+        from messageapp.models import MessageStatus
+        member_ids = group.members.filter(is_active=True).exclude(
+            user_id=sender.id
+        ).values_list("user_id", flat=True)
+        MessageStatus.objects.bulk_create([
+            MessageStatus(message=message, recipient_id=uid) for uid in member_ids
+        ])
+
+        return message
