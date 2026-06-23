@@ -374,3 +374,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
             "deleted_by": event["deleted_by"],
             "for_everyone": event["for_everyone"],
         }))
+
+    # ─── DB Helpers (sync wrapped for async) ──────────────────────
+
+    @database_sync_to_async
+    def _check_participant(self):
+        """Check if self.user is a participant in this conversation."""
+        from .models import ConversationParticipant
+        return ConversationParticipant.objects.filter(
+            conversation_id=self.conversation_id,
+            user=self.user,
+            is_active=True,
+        ).exists()
+
+
+
+
+
