@@ -41,3 +41,14 @@ class GroupMemberSerializer(serializers.ModelSerializer):
 
     def get_is_owner(self, obj):
         return obj.is_owner
+
+
+class GroupAdminPermissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GroupAdminPermission
+        fields = [
+            "can_change_group_info", "can_delete_messages",
+            "can_add_admins", "can_delete_admins", "can_delete_group",
+        ]
+
+
