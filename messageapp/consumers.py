@@ -295,7 +295,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
             },
         )
 
-
+    async def _handle_delete(self, data):
+        """User deleted a message for everyone — broadcast to room."""
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                "type": "message.deleted",
+                "message_id": data.get("message_id"),
+                "deleted_by": self.user.id,
+                "for_everyone": data.get("for_everyone", False),
+            },
+        )
 
 
 
