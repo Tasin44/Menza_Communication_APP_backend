@@ -246,7 +246,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
             },
         )
 
-
+    async def _handle_typing(self, data):
+        """
+        Broadcast typing indicator to OTHER participants only.
+        The sender doesn't need to receive their own typing event.
+        """
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                "type": "chat.typing",
+                "user_id": self.user.id,
+                "username": self.user.username,
+                "is_typing": data.get("is_typing", True),
+            },
+        )
 
 
 
