@@ -95,3 +95,49 @@ class GroupListSerializer(serializers.ModelSerializer):
             m = obj.members.filter(user=request.user, is_active=True).first()
             return m.role if m else None
         return None
+
+
+
+
+# ─────────────────────────────────────────────────────────────
+# GROUP — DETAIL
+# ─────────────────────────────────────────────────────────────
+class GroupDetailSerializer(serializers.ModelSerializer):
+    members = serializers.SerializerMethodField()
+    my_permissions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Group
+        fields = [
+            "id", "name", "logo", "description", "group_type",
+            "member_count", "max_members", "created_by", "members",
+            "my_permissions", "created_at", "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_members(self, obj):
+        # select_related("user") must be applied by the view's queryset.
+        qs = obj.members.filter(is_active=True).select_related("user")
+        return GroupMemberSerializer(qs, many=True, context=self.context).data
+
+    def get_my_permissions(self, obj):
+        """
+        Resolves the requesting user's exact capability set using
+        GroupPermissionResolver — single source of truth, see models.py.
+        """
+        request = self.context.get("request")
+        if not request:
+            return {}
+        membership = obj.members.filter(user=request.user, is_active=True).first()
+        if not membership:
+            return {}
+        resolver = GroupPermissionResolver(membership)
+        return {
+            "role": membership.role,
+            "is_owner": membership.is_owner,
+            "can_change_group_info": resolver.can_change_group_info(),
+            "can_delete_messages": resolver.can_delete_messages(),
+            "can_add_admins": resolver.can_add_admins(),
+            "can_delete_admins": resolver.can_delete_admins(),
+            "can_delete_group": resolver.can_delete_group(),
+        }
