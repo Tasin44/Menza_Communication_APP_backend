@@ -273,7 +273,52 @@ class GroupMember(models.Model):
         self.save(update_fields=["is_muted"])
 
 
+# ─────────────────────────────────────────────────────────────
+# GROUP ADMIN PERMISSION  (granular grid for a promoted admin)
+# ─────────────────────────────────────────────────────────────
+class GroupAdminPermission(models.Model):
+    """
+    Mirrors the client's `group_admin_permissions` SQL table.
 
+    Spec: "During creating a new admin, the existing admin can provide the
+    new one this permission" — i.e. when ANY admin promotes someone to
+    admin, they choose which of these five capabilities the new admin gets.
+    The group OWNER always has every permission implicitly (see
+    GroupMember.is_owner) regardless of what's stored here.
+    """
+
+    group = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        related_name="admin_permissions",
+    )
+    admin_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="granted_group_permissions",
+    )
+
+    can_change_group_info = models.BooleanField(default=False)
+    can_delete_messages = models.BooleanField(default=False)
+    # Spec default leans ON for this one — easiest way to grow a team of
+    # admins without going back to the owner every time.
+    can_add_admins = models.BooleanField(default=True)
+    can_delete_admins = models.BooleanField(default=False)
+    can_delete_group = models.BooleanField(default=False)
+
+    granted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="permissions_granted",
+    )
+    granted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "group_admin_permissions"
+        unique_together = [("group", "admin_user")]
+
+    def __str__(self):
+        return f"Permissions for {self.admin_user.username} in {self.group.name}"
 
 
 
