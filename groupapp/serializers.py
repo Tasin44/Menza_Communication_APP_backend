@@ -144,5 +144,62 @@ class GroupDetailSerializer(serializers.ModelSerializer):
 
 
 
+# ─────────────────────────────────────────────────────────────
+# CREATE GROUP
+# ─────────────────────────────────────────────────────────────
+class CreateGroupSerializer(serializers.ModelSerializer):
+    """
+    Spec: name, logo, description, group_type at creation.
+    The creator automatically becomes the owner + an ADMIN membership row
+    with the full permission grid (handled in .create(), not by the DB).
+    """
 
+    # Optional: invite some contacts straight away in the same request.
+    member_user_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list,
+        write_only=True,
+    )
 
+    class Meta:
+        model = Group
+        fields = ["id", "name", "logo", "description", "group_type", "member_user_ids"]
+        read_only_fields = ["id"]
+
+    @transaction.atomic
+    def create(self, validated_data):
+        member_ids = validated_data.pop("member_user_ids", [])
+        owner = self.context["request"].user
+
+        group = Group.objects.create(created_by=owner, **validated_data)
+
+        # Owner's own membership row — role=ADMIN with every permission,
+        # though GroupMember.is_owner already grants everything implicitly.
+        GroupMember.add(group, owner, role=GroupMember.Role.ADMIN)
+        GroupAdminPermission.objects.create(
+            group=group, admin_user=owner, granted_by=owner,
+            can_change_group_info=True, can_delete_messages=True,
+            can_add_admins=True, can_delete_admins=True, can_delete_group=True,
+        )
+
+        # Bulk-add initial members (contacts selected during creation).
+        if member_ids:
+            users = User.objects.filter(id__in=member_ids).exclude(id=owner.id)
+            for user in users:
+                GroupMember.add(group, user, role=GroupMember.Role.MEMBER)
+
+        return group
+
+# ─────────────────────────────────────────────────────────────
+# ADD MEMBER
+# ─────────────────────────────────────────────────────────────
+class AddMemberSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField()
+
+    def validate_user_id(self, value):
+        if not User.objects.filter(id=value, is_active=True).exists():
+            raise serializers.ValidationError("User not found.")
+        return value
+
+    def save(self, group: Group):
+        target = User.objects.get(id=self.validated_data["user_id"])
+        return GroupMember.add(group, target, role=GroupMember.Role.MEMBER)
