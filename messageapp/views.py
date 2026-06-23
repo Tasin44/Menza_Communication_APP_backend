@@ -592,7 +592,85 @@ class SendMessageView(BaseMessagingView):
         pass
 
 
+# ─────────────────────────────────────────────────────────────
+# MESSAGE DETAIL  (single message — get / delete)
+# ─────────────────────────────────────────────────────────────
+class MessageDetailView(BaseMessagingView):
+    """
+    GET    /api/messages/<id>/           → get a single message
+    DELETE /api/messages/<id>/           → delete (for me or for everyone)
+    DELETE /api/messages/<id>/?for_everyone=true  → delete for everyone
+    """
 
+    def _get_message_if_authorized(self, message_id, user):
+        """
+        Fetch message and verify user is a participant in its conversation/group.
+        Returns (message, None) on success, (None, error_response) on failure.
+        """
+        try:
+            message = Message.objects.select_related(
+                "sender",
+                "conversation",
+            ).get(id=message_id, is_deleted=False)
+        except Message.DoesNotExist:
+            return None, self.not_found("Message not found.")
+
+        # Verify participation
+        if message.conversation_id:
+            is_participant = ConversationParticipant.objects.filter(
+                conversation_id=message.conversation_id,
+                user=user,
+                is_active=True,
+            ).exists()
+            if not is_participant:
+                return None, self.forbidden()#❔
+
+        return message, None
+
+    def get(self, request, pk):
+        message, err = self._get_message_if_authorized(pk, request.user)
+        if err:
+            return err
+        serializer = MessageSerializer(message, context={"request": request})
+        return self.ok(serializer.data)
+
+    def delete(self, request, pk):
+        message, err = self._get_message_if_authorized(pk, request.user)
+        if err:
+            return err
+
+        for_everyone = request.query_params.get("for_everyone", "").lower() == "true"
+
+        # ── Only sender can delete for everyone ───────────────────
+        if for_everyone and message.sender != request.user:
+            return self.forbidden("Only the sender can delete a message for everyone.")
+
+        # ── Time limit: can only delete for everyone within 1 hour ─
+        if for_everyone:
+            age = (timezone.now() - message.sent_at).total_seconds()#❔explain 
+            if age > 3600:    # 1 hour in seconds
+                return self.bad_request(
+                    {}, "You can only delete a message for everyone within 1 hour."
+                )
+
+        message.soft_delete(for_everyone=for_everyone)
+
+        # ── Broadcast deletion via WebSocket ──────────────────────
+        if message.conversation_id:
+            self.broadcast_to_conversation(
+                message.conversation_id,
+                {
+                    "type": "message.deleted",
+                    "message_id": message.id,
+                    "deleted_by": request.user.id,
+                    "for_everyone": for_everyone,
+                },
+            )
+
+        return Response(
+            {"success": True, "message": "Message deleted."},
+            status=status.HTTP_204_NO_CONTENT,
+        )
 
 
 
