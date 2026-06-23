@@ -260,9 +260,40 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "is_typing": data.get("is_typing", True),
             },
         )
+    async def _handle_read_receipt(self, data):
+        """
+        User read a message — update DB and notify sender.
+        message_id: the last message they've read.
+        """
+        message_id = data.get("message_id")
+        if not message_id:
+            return
 
+        # Update DB in background thread
+        await self._mark_message_read(message_id)
 
+        # Broadcast read receipt to the room (shows double blue tick)
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                "type": "message.read",
+                "message_id": message_id,
+                "read_by_user_id": self.user.id,
+                "read_at": timezone.now().isoformat(),
+            },
+        )
 
+    async def _handle_reaction(self, data):
+        """User added/changed a reaction on a message."""
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                "type": "message.reaction",
+                "message_id": data.get("message_id"),
+                "user_id": self.user.id,
+                "emoji": data.get("emoji"),
+            },
+        )
 
 
 
