@@ -847,5 +847,58 @@ class MessageReactionView(BaseMessagingView):
 
 
 
+# ─────────────────────────────────────────────────────────────
+# PIN MESSAGE  (inside chat box)
+# ─────────────────────────────────────────────────────────────
+class PinMessageView(BaseMessagingView):
+    """
+    POST   /api/messages/conversations/<conv_id>/pin/<msg_id>/   → pin
+    DELETE /api/messages/conversations/<conv_id>/pin/<msg_id>/   → unpin
+    """
+
+    def post(self, request, conv_id, msg_id):
+        conversation = self.get_conversation_or_403(conv_id, request.user)
+        if not conversation:
+            return self.not_found()
+
+        try:
+            message = Message.objects.get(#❔
+                id=msg_id,
+                conversation=conversation,
+                is_deleted=False,
+            )
+        except Message.DoesNotExist:
+            return self.not_found("Message not found in this conversation.")
+
+        pin, created = PinnedMessage.objects.get_or_create(
+            conversation=conversation,
+            message=message,
+            defaults={"pinned_by": request.user},
+        )
+
+        # Also flag on the message itself for fast querying#❔how it is working 
+        if created:
+            Message.objects.filter(id=msg_id).update(is_pinned=True)
+
+        return self.created({}, "Message pinned." if created else "Already pinned.")
+
+    def delete(self, request, conv_id, msg_id):
+        conversation = self.get_conversation_or_403(conv_id, request.user)
+        if not conversation:
+            return self.not_found()
+
+        deleted, _ = PinnedMessage.objects.filter(
+            conversation=conversation,
+            message_id=msg_id,
+        ).delete()
+
+        if deleted:
+            # Remove pin flag from message
+            Message.objects.filter(id=msg_id).update(is_pinned=False)
+            return Response(
+                {"success": True, "message": "Message unpinned."},
+                status=status.HTTP_204_NO_CONTENT,
+            )
+        return self.not_found("Pin not found.")
 
 
