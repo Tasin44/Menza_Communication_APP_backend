@@ -70,7 +70,96 @@ def get_user_from_token(token: str):
         return None
 
 
+# ─────────────────────────────────────────────────────────────
+# CHAT CONSUMER  (DM conversations)
+# ─────────────────────────────────────────────────────────────
+class ChatConsumer(AsyncWebsocketConsumer):
+    """
+    Handles real-time messaging for a single DM conversation.
 
+    Room name: "dm_{conversation_id}"
+    Each conversation has its own room.
+    All participants of that conversation are in the room.
+
+    On connect:
+      1. Validate JWT from query string
+      2. Verify user is a participant in this conversation
+      3. Join the room group
+      4. Join personal room (for cross-device push)
+      5. Mark existing messages as delivered
+
+    On receive (message from this client):
+      1. Parse the action type
+      2. Dispatch to appropriate handler method
+    """
+
+    async def connect(self):
+        """Called when client opens WebSocket connection."""
+
+        # ── Step 1: Extract JWT from query string ─────────────────
+        # URL: ws://api.menza.com/ws/chat/42/?token=<jwt>
+        query_string = self.scope.get("query_string", b"").decode()#❔
+        token = None
+        for part in query_string.split("&"):#❔
+            if part.startswith("token="):
+                token = part.split("=", 1)[1]
+                break
+
+        if not token:
+            logger.warning("WebSocket connection rejected: no token provided")
+            await self.close(code=4001)   # custom close code: unauthenticated
+            return
+
+        # ── Step 2: Validate token and get user ───────────────────
+        self.user = await get_user_from_token(token)
+        if not self.user:
+            logger.warning("WebSocket connection rejected: invalid token")
+            await self.close(code=4001)#❔
+            return
+
+        # ── Step 3: Get conversation_id from URL route ────────────
+        # Defined in routing.py: ws/chat/<int:conversation_id>/
+        self.conversation_id = self.scope["url_route"]["kwargs"].get("conversation_id")
+
+        # ── Step 4: Verify user is a participant ──────────────────
+        is_authorized = await self._check_participant()
+        if not is_authorized:
+            logger.warning(
+                f"User {self.user.id} tried to connect to conversation "
+                f"{self.conversation_id} without permission"
+            )
+            await self.close(code=4003)   # custom: forbidden
+            return
+
+        # ── Step 5: Join the conversation's channel group ─────────
+        # All participants of this conversation are in this group
+        self.room_group_name = f"dm_{self.conversation_id}"
+
+        await self.channel_layer.group_add(
+            self.room_group_name,
+            self.channel_name,    # unique name for this connection
+        )
+
+        # ── Step 6: Join personal user room ───────────────────────
+        # So we can push notifications to this user from any server
+        self.user_group_name = f"user_{self.user.id}"
+        await self.channel_layer.group_add(
+            self.user_group_name,
+            self.channel_name,
+        )
+
+        # ── Step 7: Accept the connection ─────────────────────────
+        await self.accept()
+
+        # ── Step 8: Mark user as online ───────────────────────────
+        await self._set_user_online(True)
+
+        # ── Step 9: Send undelivered messages as delivered ─────────
+        await self._mark_existing_as_delivered()
+
+        logger.info(
+            f"User {self.user.username} connected to dm_{self.conversation_id}"
+        )
 
 
 
