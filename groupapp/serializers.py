@@ -52,3 +52,46 @@ class GroupAdminPermissionSerializer(serializers.ModelSerializer):
         ]
 
 
+# ─────────────────────────────────────────────────────────────
+# GROUP — LIST  (dashboard row)
+# ─────────────────────────────────────────────────────────────
+class GroupListSerializer(serializers.ModelSerializer):
+    """
+    Lightweight representation for the dashboard list.
+    last_message comes from messageapp.Message, attached by the view via
+    a single prefetch (see views.py) — avoids an N+1 subquery per group.
+    """
+
+    last_message = serializers.SerializerMethodField()
+    my_role = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Group
+        fields = [
+            "id", "name", "logo", "group_type", "member_count",
+            "my_role", "last_message", "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_last_message(self, obj):
+        # `prefetched_last_message` is attached in the view's queryset
+        # construction step — see GroupListCreateView.get().
+        msg = getattr(obj, "prefetched_last_message", None)
+        if not msg:
+            return None
+        return {
+            "id": msg.id,
+            "type": msg.message_type,
+            "sent_at": msg.sent_at,
+            "sender_username": msg.sender.username,
+        }
+
+    def get_my_role(self, obj):
+        request = self.context.get("request")
+        membership = getattr(obj, "prefetched_my_membership", None)
+        if membership:
+            return membership.role
+        if request:
+            m = obj.members.filter(user=request.user, is_active=True).first()
+            return m.role if m else None
+        return None
