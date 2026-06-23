@@ -949,3 +949,35 @@ class PinnedItemView(BaseMessagingView):
         )
 
 
+# ─────────────────────────────────────────────────────────────
+# MEDIA FILES  (all files shared in a conversation)
+# ─────────────────────────────────────────────────────────────
+class MediaFilesView(BaseMessagingView):
+    """
+    GET /api/messages/conversations/<id>/media/
+    Spec: User can see media files on the contact info panel.
+    Supports ?type=image|video|audio|file filter.
+    """
+
+    def get(self, request, pk):
+        conversation = self.get_conversation_or_403(pk, request.user)
+        if not conversation:
+            return self.not_found()
+
+        files = MessageFile.objects.filter(
+            message__conversation=conversation,
+            message__is_deleted=False,
+        ).select_related("message__sender").order_by("-created_at")
+
+        # ── Filter by media type ──────────────────────────────────
+        media_type = request.query_params.get("type")
+        if media_type:
+            files = files.filter(media_type=media_type)
+
+        # ── Pagination ────────────────────────────────────────────
+        paginator = MessageCursorPagination()#❔how this paginator working here 
+        paginator.ordering = "-created_at"
+        page = paginator.paginate_queryset(files, request)
+
+        serializer = MessageFileSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
