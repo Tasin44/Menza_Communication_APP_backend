@@ -436,7 +436,49 @@ class ChatConsumer(AsyncWebsocketConsumer):
             "message": message,
         }))
 
+# ─────────────────────────────────────────────────────────────
+# PRESENCE CONSUMER  (online/offline status)
+# ─────────────────────────────────────────────────────────────
+class PresenceConsumer(AsyncWebsocketConsumer):
+    """
+    Handles user presence (online/offline).
+    URL: ws://api.menza.com/ws/presence/
 
+    When a user connects here, they are marked online globally.
+    Their contacts receive a presence update.
+    When they disconnect, they're marked offline and last_seen is set.
+
+    This is separate from ChatConsumer so presence works even when
+    the user is not in any specific chat room.
+    """
+
+    async def connect(self):
+        # ── Auth ──────────────────────────────────────────────────
+        query_string = self.scope.get("query_string", b"").decode()
+        token = None
+        for part in query_string.split("&"):
+            if part.startswith("token="):
+                token = part.split("=", 1)[1]
+                break
+
+        if not token:
+            await self.close(code=4001)
+            return
+
+        self.user = await get_user_from_token(token)
+        if not self.user:
+            await self.close(code=4001)
+            return
+
+        # ── Join personal room ────────────────────────────────────
+        self.user_group = f"user_{self.user.id}"
+        await self.channel_layer.group_add(self.user_group, self.channel_name)
+        await self.accept()
+
+        # ── Mark online ───────────────────────────────────────────
+        await self._set_online(True)
+        # Notify contacts this user is online
+        await self._notify_contacts_presence(True)
 
 
 
