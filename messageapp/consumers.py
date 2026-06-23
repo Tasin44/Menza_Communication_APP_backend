@@ -217,7 +217,34 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         await handler(data)
 
+    # ─── Action Handlers ──────────────────────────────────────────
 
+    async def _handle_send_message(self, data):
+        """
+        Handle incoming message from client.
+        NOTE: We do NOT save the message here via WebSocket.
+        The client sends via REST API (POST /messages/) which saves to DB,
+        then the view calls group_send() to broadcast here.
+        This handler is for typing and presence only.
+        Rationale: REST API has auth middleware, validation, rate limiting.
+        WebSocket is for real-time delivery only.
+        """
+        # Broadcast to all participants in the room
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                "type": "chat.message",    # maps to chat_message method
+                "message_id": data.get("message_id"),
+                "sender_id": self.user.id,
+                "sender_username": self.user.username,
+                "sender_image": self.user.profile_image,
+                "content_encrypted": data.get("content_encrypted", ""),
+                "message_type": data.get("message_type", "text"),
+                "files": data.get("files", []),
+                "reply_to_id": data.get("reply_to_id"),
+                "sent_at": timezone.now().isoformat(),
+            },
+        )
 
 
 
