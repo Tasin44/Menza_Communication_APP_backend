@@ -139,3 +139,157 @@ class Group(models.Model):
         self.save(update_fields=["created_by", "updated_at"])
         membership.role = GroupMember.Role.ADMIN
         membership.save(update_fields=["role"])
+
+
+
+# ─────────────────────────────────────────────────────────────
+# GROUP MEMBER
+# ─────────────────────────────────────────────────────────────
+class GroupMember(models.Model):
+    """
+    One row per (group, user).#❔ Role drives default permissions;
+    GroupAdminPermission can fine-tune an ADMIN's exact capabilities.
+
+    Role hierarchy (spec):
+      ADMIN     — full control, can promote/demote, can be granted a
+                  custom permission grid (see GroupAdminPermission)
+      MODERATOR — "can do everything like admin, but cannot remove an admin"
+      MEMBER    — can message/call/post (if not a broadcast-only group)
+    """
+
+    class Role(models.TextChoices):
+        MEMBER = "member", "Member"
+        MODERATOR = "moderator", "Moderator"
+        ADMIN = "admin", "Admin"
+
+    group = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        related_name="members",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="group_memberships",
+    )
+    role = models.CharField(max_length=10, choices=Role.choices, default=Role.MEMBER)
+
+    is_muted = models.BooleanField(default=False)
+    # Soft-leave / soft-kick — keeps history (who said what) intact
+    # even after someone leaves, same pattern as ConversationParticipant.
+    is_active = models.BooleanField(default=True)
+
+    joined_at = models.DateTimeField(auto_now_add=True)
+    left_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "group_members"
+        unique_together = [("group", "user")]
+        indexes = [
+            models.Index(fields=["user"]),           # "all my groups"
+            models.Index(fields=["group", "role"]),   # "all admins of this group"
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} ({self.role}) in {self.group.name}"
+
+    # ── role-check shortcuts (used everywhere instead of string compares) ─
+    @property
+    def is_owner(self) -> bool:
+        return self.group.created_by_id == self.user_id
+
+    @property
+    def is_admin(self) -> bool:
+        return self.is_owner or self.role == self.Role.ADMIN
+
+    @property
+    def is_moderator(self) -> bool:
+        return self.role == self.Role.MODERATOR
+
+    @property
+    def has_elevated_access(self) -> bool:
+        """Admin or moderator — anything beyond a plain member."""
+        return self.is_admin or self.is_moderator
+
+    # ── lifecycle ──────────────────────────────────────────────────
+    @classmethod
+    @transaction.atomic
+    def add(cls, group: Group, user, role: str = Role.MEMBER) -> "GroupMember":
+        """
+        Add a user to a group. Reactivates a soft-left membership instead
+        of violating the unique_together constraint if they rejoin.
+        """
+        if group.is_full():
+            raise ValueError("This group has reached its maximum member limit.")
+
+        member, created = cls.objects.get_or_create(
+            group=group,
+            user=user,
+            defaults={"role": role},
+        )
+        if not created and not member.is_active:
+            member.is_active = True
+            member.role = role
+            member.left_at = None
+            member.save(update_fields=["is_active", "role", "left_at"])
+            created = True   # treat a rejoin as a fresh add for the counter
+
+        if created:
+            group.bump_member_count(+1)
+        return member
+
+    def leave(self):
+        """Member leaves voluntarily. Owner must transfer ownership first."""
+        if self.is_owner:
+            raise ValueError(
+                "Group owner cannot leave — transfer ownership first."
+            )
+        self.is_active = False
+        self.left_at = timezone.now()
+        self.save(update_fields=["is_active", "left_at"])
+        self.group.bump_member_count(-1)
+
+    def kick(self, by_member: "GroupMember"):
+        """Removed by an admin/moderator. Validated by GroupPermissionResolver
+        in views.py before this is called — this method just performs it."""
+        self.is_active = False
+        self.left_at = timezone.now()
+        self.save(update_fields=["is_active", "left_at"])
+        self.group.bump_member_count(-1)
+
+    def promote(self, new_role: str):
+        self.role = new_role
+        self.save(update_fields=["role"])
+        # Promoting away from admin clears any custom permission grid.
+        if new_role != self.Role.ADMIN:
+            GroupAdminPermission.objects.filter(group=self.group, admin_user=self.user).delete()
+
+    def mute(self):
+        self.is_muted = True
+        self.save(update_fields=["is_muted"])
+
+    def unmute(self):
+        self.is_muted = False
+        self.save(update_fields=["is_muted"])
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
