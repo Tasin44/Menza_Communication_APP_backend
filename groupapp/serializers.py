@@ -141,3 +141,8 @@ class GroupDetailSerializer(serializers.ModelSerializer):
             "can_delete_admins": resolver.can_delete_admins(),
             "can_delete_group": resolver.can_delete_group(),
         }
+
+
+
+
+
