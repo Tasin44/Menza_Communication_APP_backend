@@ -902,3 +902,50 @@ class PinMessageView(BaseMessagingView):
         return self.not_found("Pin not found.")
 
 
+# ─────────────────────────────────────────────────────────────
+# DASHBOARD PINS  (max 5 per user)
+# ─────────────────────────────────────────────────────────────
+class PinnedItemView(BaseMessagingView):
+    """
+    GET    /api/messages/pins/           → list all dashboard pins (max 5)
+    POST   /api/messages/pins/           → pin an item
+    DELETE /api/messages/pins/<id>/      → unpin
+    """
+
+    def get(self, request):
+        """List pinned items ordered by position (1=top)."""
+        pins = PinnedItem.objects.filter(
+            user=request.user
+        ).order_by("position")
+        serializer = PinnedItemSerializer(pins, many=True, context={"request": request})#❔why many=true using here 
+        return self.ok(serializer.data)
+
+    def post(self, request):
+        """
+        Pin an item to the dashboard.
+        Spec: max 5, position 1–5.
+        Enforced by serializer + CHECK constraint.
+        """
+        serializer = PinnedItemSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        pin = serializer.save()
+        return self.created(
+            PinnedItemSerializer(pin).data,
+            "Item pinned to dashboard.",
+        )
+
+    def delete(self, request, pk):
+        try:
+            pin = PinnedItem.objects.get(id=pk, user=request.user)
+        except PinnedItem.DoesNotExist:
+            return self.not_found()
+        pin.delete()
+        return Response(
+            {"success": True, "message": "Item unpinned."},
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+
