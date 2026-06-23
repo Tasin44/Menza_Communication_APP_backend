@@ -161,7 +161,25 @@ class ChatConsumer(AsyncWebsocketConsumer):
             f"User {self.user.username} connected to dm_{self.conversation_id}"
         )
 
+    async def disconnect(self, close_code):
+        """Called when client closes the WebSocket."""
+        if hasattr(self, "room_group_name"):
+            # Leave the conversation room
+            await self.channel_layer.group_discard(
+                self.room_group_name,
+                self.channel_name,
+            )
+        if hasattr(self, "user_group_name"):
+            # Leave personal room
+            await self.channel_layer.group_discard(
+                self.user_group_name,
+                self.channel_name,
+            )
+        # Update last_seen timestamp on disconnect
+        if hasattr(self, "user"):
+            await self._set_user_online(False)
 
+        logger.info(f"User {getattr(self, 'user', 'unknown')} disconnected")
 
 
 
