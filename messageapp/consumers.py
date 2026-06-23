@@ -388,6 +388,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
         ).exists()
 
 
-
+    @database_sync_to_async
+    def _set_user_online(self, is_online: bool):
+        """
+        Update user's online status and last_seen.
+        Called on connect (online=True) and disconnect (online=False).
+        """
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        updates = {"is_online": is_online}
+        if not is_online:
+            updates["last_seen"] = timezone.now()    # record when they went offline
+        User.objects.filter(id=self.user.id).update(**updates)
 
 
