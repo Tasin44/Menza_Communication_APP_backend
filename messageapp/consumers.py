@@ -307,7 +307,24 @@ class ChatConsumer(AsyncWebsocketConsumer):
             },
         )
 
+    # ─── Channel Layer Event Handlers (group_send receivers) ──────
+    # These are called when a message is dispatched to this group.
+    # Method names must match the "type" field with dots replaced by underscores.
 
+    async def chat_message(self, event):
+        """Receive a chat message from the group and send to this WebSocket client."""
+        await self.send(text_data=json.dumps({
+            "event": "new_message",
+            "message_id": event.get("message_id"),
+            "sender_id": event["sender_id"],
+            "sender_username": event["sender_username"],
+            "sender_image": event.get("sender_image"),
+            "content_encrypted": event.get("content_encrypted", ""),
+            "message_type": event.get("message_type", "text"),
+            "files": event.get("files", []),
+            "reply_to_id": event.get("reply_to_id"),
+            "sent_at": event["sent_at"],
+        }))
 
 
 
