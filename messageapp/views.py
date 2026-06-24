@@ -346,6 +346,7 @@ class ConversationActionView(BaseMessagingView):
             "mute": self._mute,
             "unmute": self._unmute,
             "block": self._block,
+            "unblock": self._unblock,
             "archive": self._archive,
             "unarchive": self._unarchive,
         }
@@ -385,6 +386,42 @@ class ConversationActionView(BaseMessagingView):
         return self.ok({}, "Conversation unmuted.")
 
 
+
+    def _block(self, request, pk):
+        """Block the other user in this conversation."""
+        conversation = self.get_conversation_or_403(pk, request.user)
+        if not conversation:
+            return self.not_found()
+
+        other_participant = ConversationParticipant.objects.filter(
+            conversation=conversation
+        ).exclude(user=request.user).first()
+
+        if other_participant:
+            BlockedUser.objects.get_or_create(
+                blocker=request.user,
+                blocked=other_participant.user
+            )
+            return self.ok({}, "User blocked.")
+        return self.bad_request({}, "Cannot block in this conversation.")
+
+    def _unblock(self, request, pk):
+        """Unblock the other user in this conversation."""
+        conversation = self.get_conversation_or_403(pk, request.user)
+        if not conversation:
+            return self.not_found()
+
+        other_participant = ConversationParticipant.objects.filter(
+            conversation=conversation
+        ).exclude(user=request.user).first()
+
+        if other_participant:
+            BlockedUser.objects.filter(
+                blocker=request.user,
+                blocked=other_participant.user
+            ).delete()
+            return self.ok({}, "User unblocked.")
+        return self.bad_request({}, "Cannot unblock in this conversation.")
 
     def _archive(self, request, pk):
         """Archive conversation — hides from main list but keeps history."""

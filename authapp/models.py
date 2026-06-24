@@ -95,6 +95,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     # ── presence ──────────────────────────────
     # Updated by WebSocket on disconnect — not touched in auth views
+    is_online = models.BooleanField(default=False)
     last_seen = models.DateTimeField(null=True, blank=True)
 
     # ── timestamps ────────────────────────────
