@@ -310,3 +310,15 @@ class PostReactionView(BaseChannelView):
         if not deleted:
             return self.not_found("You haven't reacted to this post.")
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ─────────────────────────────────────────────────────────────
+# COMMENTS
+# ─────────────────────────────────────────────────────────────
+class PostCommentView(BaseChannelView):
+    def get(self, request, pk, post_id):
+        post = ChannelPost.objects.filter(id=post_id, channel_id=pk, deleted_at__isnull=True).first()
+        if not post:
+            return self.not_found()
+        comments = post.comments.filter(is_deleted=False).select_related("author").order_by("created_at")
+        return self.ok(ChannelPostCommentSerializer(comments, many=True, context={"request": request}).data)
