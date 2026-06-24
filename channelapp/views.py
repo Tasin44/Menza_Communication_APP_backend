@@ -256,3 +256,14 @@ class ChannelPostListCreateView(BaseChannelView):
         page = paginator.paginate_queryset(posts, request)
         serializer = ChannelPostSerializer(page, many=True, context={"request": request})
         return paginator.get_paginated_response(serializer.data)
+        
+    def post(self, request, pk):
+        channel, err = self.get_owned_channel_or_403(pk, request.user)
+        if err:
+            return err
+        serializer = CreateChannelPostSerializer(
+            data=request.data, context={"request": request, "channel": channel}
+        )
+        serializer.is_valid(raise_exception=True)
+        post = serializer.save()
+        return self.created(ChannelPostSerializer(post, context={"request": request}).data, "Post created.")
