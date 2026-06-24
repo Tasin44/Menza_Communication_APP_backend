@@ -267,9 +267,9 @@ class MemberRoleView(BaseGroupView):
         if err:
             return err
 
-        target = membership.group.members.filter(id=member_id, is_active=True).first()
+        target = membership.group.members.filter(user_id=member_id, is_active=True).first()
         if not target:
-            return self.not_found("Member not found.")
+            return self.not_found("User not exist")
 
         resolver = GroupPermissionResolver(membership)
         new_role = request.data.get("role")
@@ -318,9 +318,9 @@ class RemoveMemberView(BaseGroupView):
             })
             return self.success_response(data={}, message="Left group.", status_code=status.HTTP_204_NO_CONTENT)
 
-        target = membership.group.members.filter(id=member_id, is_active=True).first()
+        target = membership.group.members.filter(user_id=member_id, is_active=True).first()
         if not target:
-            return self.not_found("Member not found.")
+            return self.not_found("User not exist")
 
         if not GroupPermissionResolver(membership).can_remove_member(target):
             return self.forbidden("You can't remove this member.")
