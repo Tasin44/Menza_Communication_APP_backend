@@ -47,3 +47,37 @@ class ChannelListSerializer(serializers.ModelSerializer):
         if not request or not request.user.is_authenticated:
             return False
         return obj.subscribers.filter(user=request.user).exists()
+
+
+# ─────────────────────────────────────────────────────────────
+# CHANNEL — DETAIL
+# ─────────────────────────────────────────────────────────────
+class ChannelDetailSerializer(serializers.ModelSerializer):
+    owner = SenderSerializer(source="created_by", read_only=True)
+    is_subscribed = serializers.SerializerMethodField()
+    unique_viewers = serializers.SerializerMethodField()
+    is_owner = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Channel
+        fields = [
+            "id", "handle", "name", "logo", "banner", "description",
+            "category", "channel_type", "owner", "subscriber_count",
+            "unique_viewers", "is_verified", "external_links",
+            "is_boosted", "boost_expires_at", "is_subscribed", "is_owner",
+            "discoverable_consented_at", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_is_subscribed(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        return obj.subscribers.filter(user=request.user).exists()
+
+    def get_unique_viewers(self, obj):
+        return obj.views.count()
+
+    def get_is_owner(self, obj):
+        request = self.context.get("request")
+        return bool(request and obj.created_by_id == request.user.id)
