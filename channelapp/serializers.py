@@ -152,3 +152,37 @@ class ChannelPostCommentSerializer(serializers.ModelSerializer):
         return ChannelPostComment.objects.create(
             post=post, author=self.context["request"].user, **validated_data
         )
+
+# ─────────────────────────────────────────────────────────────
+# CHANNEL POST
+# ─────────────────────────────────────────────────────────────
+class ChannelPostSerializer(serializers.ModelSerializer):
+    """
+    Read serializer. `reaction_counts` is a small emoji→count map
+    (cheaper to render than the full reactor list for a public feed with
+    potentially thousands of reactions).
+    """
+
+    author = SenderSerializer(read_only=True)
+    reaction_counts = serializers.SerializerMethodField()
+    comment_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChannelPost
+        fields = [
+            "id", "channel", "author", "content", "media_url", "media_type",
+            "comments_enabled", "is_pinned", "reaction_counts",
+            "comment_count", "published_at", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_reaction_counts(self, obj):
+        # Uses prefetched .reactions (set in the view's queryset) —
+        # counting in Python avoids a second aggregate query per post.
+        counts = {}
+        for r in obj.reactions.all():
+            counts[r.emoji] = counts.get(r.emoji, 0) + 1
+        return counts
+
+    def get_comment_count(self, obj):
+        return obj.comments.filter(is_deleted=False).count()
