@@ -20,3 +20,8 @@ python-decouple>=3.8                    # .env file management
 # ── Dev / testing ────────────────────────────
 pytest-django>=4.8
 factory-boy>=3.3
+
+# ── WebSockets ───────────────────────────────
+channels>=4.0.0
+daphne>=4.0.0
+channels-redis>=4.0.0

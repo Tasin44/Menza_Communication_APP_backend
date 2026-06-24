@@ -3,6 +3,7 @@
 from typing import Required
 from django.http import request
 from django.db import transaction
+from django.db.models import Q #Q is Django's class for building complex OR/AND queries.
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from .models import (
@@ -40,10 +41,10 @@ class BlockCheckMixin:
         """
         from authapp.models import BlockedUser
         # One DB query using OR — checks both directions
-        is_blocked = BlockedUser.objects.filter(#❔what is models here? what it is pointing?
+        is_blocked = BlockedUser.objects.filter(
             # A blocked B  OR  B blocked A
-            models.Q(blocker=user_a, blocked=user_b) |
-            models.Q(blocker=user_b, blocked=user_a)
+            Q(blocker=user_a, blocked=user_b) |
+            Q(blocker=user_b, blocked=user_a)
         ).exists()
 
         if is_blocked:
