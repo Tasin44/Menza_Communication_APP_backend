@@ -311,3 +311,17 @@ class ChannelPostReaction(models.Model):
     class Meta:
         db_table = "channel_post_reactions"
         unique_together = [("post", "user")]
+
+class ChannelPostComment(models.Model):
+    """Only created when ChannelPost.comments_enabled is True (enforced
+    in the serializer, not the DB — a flag flip shouldn't orphan rows)."""
+
+    post = models.ForeignKey(ChannelPost, on_delete=models.CASCADE, related_name="comments")
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="channel_comments")
+    content = models.TextField()
+    is_deleted = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "channel_post_comments"
+        indexes = [models.Index(fields=["post", "created_at"])]
