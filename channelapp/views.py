@@ -90,3 +90,51 @@ class BaseChannelView(APIView):
         if channel.created_by_id != user.id:
             return None, self.forbidden("Only the channel owner can do this.")
         return channel, None
+
+# ─────────────────────────────────────────────────────────────
+# LIST + CREATE
+# ─────────────────────────────────────────────────────────────
+class ChannelListCreateView(BaseChannelView):
+    """
+    GET  /api/channels/?category=tech&search=foo&mine=true
+    POST /api/channels/
+    """
+
+    def get(self, request):
+        qs = Channel.objects.filter(deleted_at__isnull=True)
+
+        # `mine=true` → only channels I'm subscribed to (dashboard list);
+        # default → public discoverable channels (Discover tab — heavy
+        # lifting/ranking lives in discoveryapp, this is the plain list).
+        if request.query_params.get("mine") == "true":
+            my_channel_ids = ChannelSubscriber.objects.filter(
+                user=request.user
+            ).values_list("channel_id", flat=True)
+            qs = qs.filter(id__in=my_channel_ids)
+        else:
+            qs = qs.filter(channel_type=Channel.ChannelType.PUBLIC)
+
+        category = request.query_params.get("category")
+        if category:
+            qs = qs.filter(category=category)
+
+        search = request.query_params.get("search")
+        if search:
+            qs = qs.filter(name__icontains=search) | qs.filter(handle__icontains=search)
+
+        qs = qs.select_related("created_by").order_by("-is_boosted", "-subscriber_count")
+
+        # Flag which of these the requester already subscribes to, in
+        # ONE query instead of one-per-row.
+        channel_ids = [c.id for c in qs]
+        subscribed_ids = set(
+            ChannelSubscriber.objects.filter(
+                user=request.user, channel_id__in=channel_ids
+            ).values_list("channel_id", flat=True)
+        )
+        results = list(qs)
+        for c in results:
+            c.prefetched_is_subscribed = c.id in subscribed_ids
+
+        serializer = ChannelListSerializer(results, many=True, context={"request": request})
+        return self.ok(serializer.data)
