@@ -164,5 +164,45 @@ class Channel(models.Model):
         self.save(update_fields=["deleted_at", "updated_at"])
 
 
+# ─────────────────────────────────────────────────────────────
+# CHANNEL SUBSCRIBER
+# ─────────────────────────────────────────────────────────────
+class ChannelSubscriber(models.Model):
+    """
+    Spec: subscribing gives notifications + (optionally) the ability to
+    comment; viewing (without subscribing) is allowed on public channels
+    but isn't tracked here as a row — see ChannelView for anonymous-ish
+    view analytics instead.
+    """
 
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="subscribers")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="channel_subscriptions"
+    )
+    notifications_enabled = models.BooleanField(default=True)
+    subscribed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "channel_subscribers"
+        unique_together = [("channel", "user")]
+        indexes = [models.Index(fields=["user"])]   # "channels I'm subscribed to"
+
+    def __str__(self):
+        return f"{self.user.username} → @{self.channel.handle}"
+
+    @classmethod
+    @transaction.atomic
+    def subscribe(cls, channel: Channel, user) -> "ChannelSubscriber":
+        sub, created = cls.objects.get_or_create(channel=channel, user=user)
+        if created:
+            channel.bump_subscriber_count(+1)
+        return sub
+
+    @classmethod
+    @transaction.atomic
+    def unsubscribe(cls, channel: Channel, user) -> bool:
+        deleted, _ = cls.objects.filter(channel=channel, user=user).delete()
+        if deleted:
+            channel.bump_subscriber_count(-1)
+        return bool(deleted)
 
