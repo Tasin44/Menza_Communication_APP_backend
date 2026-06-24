@@ -332,3 +332,24 @@ class PostCommentView(BaseChannelView):
         serializer.is_valid(raise_exception=True)
         comment = serializer.save()
         return self.created(ChannelPostCommentSerializer(comment).data, "Comment added.")
+
+# ─────────────────────────────────────────────────────────────
+# BOOST  (paid promotion)
+# ─────────────────────────────────────────────────────────────
+class BoostChannelView(BaseChannelView):
+    """
+    POST /api/channels/<id>/boost/   { amount, boost_days }
+    Creates a PENDING payment row; the actual provider integration
+    (Stripe/PayPal/etc.) calls BoostWebhookView below to confirm it.
+    """
+
+    def post(self, request, pk):
+        channel, err = self.get_owned_channel_or_403(pk, request.user)
+        if err:
+            return err
+        serializer = CreateBoostPaymentSerializer(
+            data=request.data, context={"request": request, "channel": channel}
+        )
+        serializer.is_valid(raise_exception=True)
+        payment = serializer.save()
+        return self.created(CreateBoostPaymentSerializer(payment).data, "Boost payment created — pending confirmation.")
