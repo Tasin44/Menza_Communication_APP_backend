@@ -256,7 +256,7 @@ class ChannelPostListCreateView(BaseChannelView):
         page = paginator.paginate_queryset(posts, request)
         serializer = ChannelPostSerializer(page, many=True, context={"request": request})
         return paginator.get_paginated_response(serializer.data)
-        
+
     def post(self, request, pk):
         channel, err = self.get_owned_channel_or_403(pk, request.user)
         if err:
@@ -267,3 +267,14 @@ class ChannelPostListCreateView(BaseChannelView):
         serializer.is_valid(raise_exception=True)
         post = serializer.save()
         return self.created(ChannelPostSerializer(post, context={"request": request}).data, "Post created.")
+
+class PinPostView(BaseChannelView):
+    def post(self, request, pk, post_id):
+        channel, err = self.get_owned_channel_or_403(pk, request.user)
+        if err:
+            return err
+        post = channel.posts.filter(id=post_id, deleted_at__isnull=True).first()
+        if not post:
+            return self.not_found()
+        post.pin()
+        return self.ok({}, "Post pinned.")
