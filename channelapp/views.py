@@ -225,3 +225,34 @@ class SubscribeView(BaseChannelView):
             return self.not_found()
         ChannelSubscriber.unsubscribe(channel, request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+# ─────────────────────────────────────────────────────────────
+# POSTS  (feed + create)
+# ─────────────────────────────────────────────────────────────
+class ChannelPostListCreateView(BaseChannelView):
+    """
+    GET  /api/channels/<id>/posts/    — public feed (subscribers + viewers)
+    POST /api/channels/<id>/posts/    — owner only
+    """
+
+    def get(self, request, pk):
+        channel = self.get_channel_or_404(pk)
+        if not channel:
+            return self.not_found()
+
+        if channel.channel_type == Channel.ChannelType.PRIVATE:
+            is_subscribed = channel.subscribers.filter(user=request.user).exists()
+            if not is_subscribed and channel.created_by_id != request.user.id:
+                return self.forbidden("Subscribe to view this channel's posts.")
+
+        posts = (
+            ChannelPost.objects.filter(channel=channel, deleted_at__isnull=True, published_at__isnull=False)
+            .select_related("author")
+            .prefetch_related("reactions")
+            .order_by("-is_pinned", "-published_at")
+        )
+
+        paginator = ChannelFeedPagination()
+        page = paginator.paginate_queryset(posts, request)
+        serializer = ChannelPostSerializer(page, many=True, context={"request": request})
+        return paginator.get_paginated_response(serializer.data)
