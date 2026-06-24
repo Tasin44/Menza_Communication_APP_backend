@@ -115,7 +115,53 @@ class Channel(models.Model):
     def __str__(self):
         return f"@{self.handle}"
 
+    # ── discoverability state machine ──────────────────────────────
+    @property
+    def is_discoverable(self) -> bool:
+        return self.channel_type == self.ChannelType.PUBLIC and self.deleted_at is None
 
+    def make_discoverable(self):
+        """
+        Spec: "Default OFF... Confirmation modal... before the toggle
+        saves." Caller (the view) is responsible for having already
+        collected that confirmation — this method just enforces that the
+        consent timestamp exists before flipping the flag, so the rule
+        can never be bypassed by calling the model directly either.
+        """
+        if not self.discoverable_consented_at:
+            self.discoverable_consented_at = timezone.now()
+        self.channel_type = self.ChannelType.PUBLIC
+        self.save(update_fields=["channel_type", "discoverable_consented_at", "updated_at"])
+
+    def make_private(self):
+        """
+        Spec: "Do existing subscribers keep access when discovery is
+        turned off?" — yes, we only flip the flag; subscriber rows are
+        untouched. Historical posts are RETAINED (legal doc K: "Deleted
+        posts (12 months) — yes, court order"), so we don't touch posts
+        either; we simply stop indexing the channel for discovery.
+        """
+        self.channel_type = self.ChannelType.PRIVATE
+        self.save(update_fields=["channel_type", "updated_at"])
+
+    # ── subscriber counter (atomic, race-safe — same F() pattern as
+    #    groupapp.Group.bump_member_count) ──────────────────────────
+    def bump_subscriber_count(self, delta: int):
+        Channel.objects.filter(pk=self.pk).update(
+            subscriber_count=models.F("subscriber_count") + delta
+        )
+        self.refresh_from_db(fields=["subscriber_count"])
+
+    def apply_boost(self, days: int):
+        self.is_boosted = True
+        self.boost_count = models.F("boost_count") + 1
+        self.boost_expires_at = timezone.now() + timezone.timedelta(days=days)
+        self.save(update_fields=["is_boosted", "boost_count", "boost_expires_at"])
+        self.refresh_from_db(fields=["boost_count"])
+
+    def soft_delete(self):
+        self.deleted_at = timezone.now()
+        self.save(update_fields=["deleted_at", "updated_at"])
 
 
 
