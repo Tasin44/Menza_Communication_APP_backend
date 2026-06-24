@@ -125,3 +125,14 @@ class ToggleDiscoverableSerializer(serializers.Serializer):
             )
         channel.make_discoverable()
         return channel
+
+# ─────────────────────────────────────────────────────────────
+# POST REACTION / COMMENT  (nested in PostSerializer)
+# ─────────────────────────────────────────────────────────────
+class ChannelPostReactionSerializer(serializers.ModelSerializer):
+    reactor = SenderSerializer(source="user", read_only=True)
+
+    class Meta:
+        model = ChannelPostReaction
+        fields = ["id", "emoji", "reactor", "created_at"]
+        read_only_fields = fields
