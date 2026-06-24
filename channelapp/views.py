@@ -147,3 +147,21 @@ class ChannelListCreateView(BaseChannelView):
             ChannelDetailSerializer(channel, context={"request": request}).data,
             "Channel created.",
         )
+
+# ─────────────────────────────────────────────────────────────
+# DETAIL
+# ─────────────────────────────────────────────────────────────
+class ChannelDetailView(BaseChannelView):
+    def get(self, request, pk):
+        channel = self.get_channel_or_404(pk)
+        if not channel:
+            return self.not_found()
+
+        # View on a public channel — or a private one you're subscribed
+        # to — counts as a unique viewer for analytics, even if you
+        # don't subscribe (spec: viewing != subscribing).
+        is_subscribed = channel.subscribers.filter(user=request.user).exists()
+        if channel.is_discoverable or is_subscribed:
+            ChannelView.record(channel, request.user)
+
+        return self.ok(ChannelDetailSerializer(channel, context={"request": request}).data)
