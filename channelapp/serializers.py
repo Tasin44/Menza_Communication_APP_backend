@@ -208,3 +208,19 @@ class CreateChannelPostSerializer(serializers.ModelSerializer):
         else:
             post.publish_now()
         return post
+
+# ─────────────────────────────────────────────────────────────
+# BOOST
+# ─────────────────────────────────────────────────────────────
+class CreateBoostPaymentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChannelBoostPayment
+        fields = ["id", "amount", "boost_days", "payment_status", "created_at"]
+        read_only_fields = ["id", "payment_status", "created_at"]
+
+    def create(self, validated_data):
+        return ChannelBoostPayment.objects.create(
+            channel=self.context["channel"],
+            paid_by=self.context["request"].user,
+            **validated_data,
+        )
