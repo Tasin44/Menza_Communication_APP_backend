@@ -138,3 +138,12 @@ class ChannelListCreateView(BaseChannelView):
 
         serializer = ChannelListSerializer(results, many=True, context={"request": request})
         return self.ok(serializer.data)
+
+    def post(self, request):
+        serializer = CreateChannelSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        channel = serializer.save()
+        return self.created(
+            ChannelDetailSerializer(channel, context={"request": request}).data,
+            "Channel created.",
+        )
