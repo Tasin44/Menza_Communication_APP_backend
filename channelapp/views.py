@@ -165,3 +165,20 @@ class ChannelDetailView(BaseChannelView):
             ChannelView.record(channel, request.user)
 
         return self.ok(ChannelDetailSerializer(channel, context={"request": request}).data)
+
+    def patch(self, request, pk):
+        channel, err = self.get_owned_channel_or_403(pk, request.user)
+        if err:
+            return err
+        for field in ("name", "logo", "banner", "description", "category", "external_links"):
+            if field in request.data:
+                setattr(channel, field, request.data[field])
+        channel.save()
+        return self.ok(ChannelDetailSerializer(channel, context={"request": request}).data, "Channel updated.")
+
+    def delete(self, request, pk):
+        channel, err = self.get_owned_channel_or_403(pk, request.user)
+        if err:
+            return err
+        channel.soft_delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
