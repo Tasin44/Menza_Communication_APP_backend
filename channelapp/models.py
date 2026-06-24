@@ -229,3 +229,75 @@ class ChannelView(models.Model):
     @classmethod
     def record(cls, channel: Channel, user):
         cls.objects.update_or_create(channel=channel, user=user)
+
+
+# ─────────────────────────────────────────────────────────────
+# CHANNEL POST
+# ─────────────────────────────────────────────────────────────
+class ChannelPost(models.Model):
+    """
+    See module docstring re: plaintext content — this is intentional and
+    matches the legal framework's public-channel model, not an oversight.
+    """
+
+    class MediaType(models.TextChoices):
+        NONE = "none", "None"
+        IMAGE = "image", "Image"
+        VIDEO = "video", "Video"
+        AUDIO = "audio", "Audio"
+        FILE = "file", "File"
+
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="posts")
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="channel_posts")
+
+    content = models.TextField(blank=True, default="")
+    media_url = models.CharField(max_length=500, blank=True, null=True)
+    media_type = models.CharField(max_length=10, choices=MediaType.choices, default=MediaType.NONE)
+
+    comments_enabled = models.BooleanField(default=True)
+    is_pinned = models.BooleanField(default=False, db_index=True)
+
+    # Premium feature: schedule a post for the future. publish_post()
+    # (called by a periodic task) flips published_at once scheduled_at
+    # has passed.
+    scheduled_at = models.DateTimeField(null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    # Soft-delete with 12-month retention, per legal doc K:
+    # "Deleted posts (12 months) — yes, court order".
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "channel_posts"
+        ordering = ["-published_at"]
+        indexes = [
+            # Hottest query: "feed for this channel, newest first".
+            models.Index(fields=["channel", "-published_at"]),
+            models.Index(fields=["is_pinned"]),
+        ]
+
+    def __str__(self):
+        return f"Post#{self.pk} in @{self.channel.handle}"
+
+    @property
+    def is_visible(self) -> bool:
+        return self.deleted_at is None and self.published_at is not None and self.published_at <= timezone.now()
+
+    def publish_now(self):
+        self.published_at = timezone.now()
+        self.save(update_fields=["published_at"])
+
+    def soft_delete(self):
+        """Display-flag only — row is retained 12 months for legal reasons."""
+        self.deleted_at = timezone.now()
+        self.save(update_fields=["deleted_at"])
+
+    def pin(self):
+        # Unpin any previously pinned post in the same channel first —
+        # only one pinned post at a time, mirrors messageapp's single-pin
+        # convention per chat box.
+        ChannelPost.objects.filter(channel=self.channel, is_pinned=True).update(is_pinned=False)
+        self.is_pinned = True
+        self.save(update_fields=["is_pinned"])
