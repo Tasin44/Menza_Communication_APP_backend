@@ -325,3 +325,37 @@ class ChannelPostComment(models.Model):
     class Meta:
         db_table = "channel_post_comments"
         indexes = [models.Index(fields=["post", "created_at"])]
+
+
+# ─────────────────────────────────────────────────────────────
+# BOOST PAYMENT
+# ─────────────────────────────────────────────────────────────
+class ChannelBoostPayment(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PAID = "paid", "Paid"
+        FAILED = "failed", "Failed"
+
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="boost_payments")
+    paid_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="channel_boosts_paid")
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    boost_days = models.PositiveIntegerField()
+    payment_status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    # Reference from the payment gateway (Stripe/PayPal/etc.) for reconciliation.
+    provider_reference = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "channel_boost_payments"
+        indexes = [models.Index(fields=["channel"]), models.Index(fields=["payment_status"])]
+
+    def mark_paid(self):
+        """Confirm payment (e.g. from a webhook) and apply the boost atomically."""
+        with transaction.atomic():
+            self.payment_status = self.Status.PAID
+            self.save(update_fields=["payment_status"])
+            self.channel.apply_boost(self.boost_days)
+
+    def mark_failed(self):
+        self.payment_status = self.Status.FAILED
+        self.save(update_fields=["payment_status"])
