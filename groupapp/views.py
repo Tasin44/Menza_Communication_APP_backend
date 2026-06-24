@@ -316,7 +316,7 @@ class RemoveMemberView(BaseGroupView):
             self.broadcast_to_group(pk, {
                 "type": "group.member_left", "user_id": request.user.id,
             })
-            return self.success_response(data={}, message="Left group.", status_code=status.HTTP_204_NO_CONTENT)
+            return self.success_response(data={}, message=f'user "{request.user.username}" left this group', status_code=status.HTTP_200_OK)
 
         target = membership.group.members.filter(user_id=member_id, is_active=True).first()
         if not target:
