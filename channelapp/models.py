@@ -301,3 +301,13 @@ class ChannelPost(models.Model):
         ChannelPost.objects.filter(channel=self.channel, is_pinned=True).update(is_pinned=False)
         self.is_pinned = True
         self.save(update_fields=["is_pinned"])
+
+class ChannelPostReaction(models.Model):
+    post = models.ForeignKey(ChannelPost, on_delete=models.CASCADE, related_name="reactions")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="channel_post_reactions")
+    emoji = models.CharField(max_length=10)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "channel_post_reactions"
+        unique_together = [("post", "user")]
