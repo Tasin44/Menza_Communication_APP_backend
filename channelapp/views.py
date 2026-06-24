@@ -182,3 +182,28 @@ class ChannelDetailView(BaseChannelView):
             return err
         channel.soft_delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+class ToggleDiscoverableView(BaseChannelView):
+    """
+    POST   /api/channels/<id>/discoverable/   { confirmed: true }  → go public
+    DELETE /api/channels/<id>/discoverable/                          → go private
+    """
+
+    def post(self, request, pk):
+        channel, err = self.get_owned_channel_or_403(pk, request.user)
+        if err:
+            return err
+        serializer = ToggleDiscoverableSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(channel=channel)
+        return self.ok(ChannelDetailSerializer(channel, context={"request": request}).data, "Channel is now discoverable.")
+
+    def delete(self, request, pk):
+        channel, err = self.get_owned_channel_or_403(pk, request.user)
+        if err:
+            return err
+        channel.make_private()
+        return self.ok(ChannelDetailSerializer(channel, context={"request": request}).data, "Channel is now private.")
+
+
+
