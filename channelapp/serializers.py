@@ -81,3 +81,31 @@ class ChannelDetailSerializer(serializers.ModelSerializer):
     def get_is_owner(self, obj):
         request = self.context.get("request")
         return bool(request and obj.created_by_id == request.user.id)
+
+# ─────────────────────────────────────────────────────────────
+# CREATE / UPDATE CHANNEL
+# ─────────────────────────────────────────────────────────────
+class CreateChannelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Channel
+        fields = ["id", "handle", "name", "logo", "description", "category"]
+        read_only_fields = ["id"]
+        # channel_type is intentionally excluded here — every new channel
+        # starts PRIVATE; going PUBLIC is a separate, consent-gated action
+        # via ToggleDiscoverableView (see views.py).
+
+    def validate_handle(self, value):
+        value = value.lstrip("@").lower()
+        if not value.isidentifier() and not value.replace("_", "").isalnum():
+            raise serializers.ValidationError("Handle may contain only letters, numbers, and underscores.")
+        if Channel.objects.filter(handle__iexact=value).exists():
+            raise serializers.ValidationError("This handle is already taken.")
+        return value
+
+    def create(self, validated_data):
+        owner = self.context["request"].user
+        channel = Channel.objects.create(created_by=owner, **validated_data)
+        # Owner auto-subscribes to their own channel (so it shows in
+        # their dashboard list immediately).
+        ChannelSubscriber.subscribe(channel, owner)
+        return channel
