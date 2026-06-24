@@ -186,3 +186,25 @@ class ChannelPostSerializer(serializers.ModelSerializer):
 
     def get_comment_count(self, obj):
         return obj.comments.filter(is_deleted=False).count()
+
+class CreateChannelPostSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChannelPost
+        fields = ["id", "content", "media_url", "media_type", "comments_enabled", "scheduled_at"]
+        read_only_fields = ["id"]
+
+    @transaction.atomic
+    def create(self, validated_data):
+        channel = self.context["channel"]
+        author = self.context["request"].user
+        scheduled_at = validated_data.pop("scheduled_at", None)
+
+        post = ChannelPost.objects.create(channel=channel, author=author, **validated_data)
+        if scheduled_at and scheduled_at > timezone.now():
+            post.scheduled_at = scheduled_at
+            post.save(update_fields=["scheduled_at"])
+            # published_at stays NULL until a periodic task (or
+            # PublishScheduledPostsView, see views.py) calls publish_now().
+        else:
+            post.publish_now()
+        return post
