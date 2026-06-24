@@ -107,6 +107,11 @@ class SignupSerializer(serializers.Serializer):
             purpose=OTPVerification.Purpose.SIGNUP,
             expires_at=_otp_expiry(minutes=10),
         )
+        
+        # Cache the pending signup data with the OTP code as part of the key
+        from django.core.cache import cache
+        cache.set(f"signup_{otp_code}", data, timeout=600)
+        
         return otp_code, identifier, data       # view stores `data` temporarily
 
 
@@ -116,48 +121,48 @@ class VerifySignupOTPSerializer(serializers.Serializer):
     If valid → create the User row → return JWT tokens.
     """
 
-    identifier = serializers.CharField()   # email or phone they signed up with
     otp_code = serializers.CharField(max_length=6, min_length=6)
-    # Pending user data passed back from client (stored in view session/cache)
-    username = serializers.CharField(max_length=100)
-    email = serializers.EmailField(required=False, allow_blank=True)
-    phone = serializers.CharField(max_length=50, required=False, allow_blank=True)
-    password = serializers.CharField(write_only=True)
-    first_name = serializers.CharField(required=False, allow_blank=True)
-    last_name = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, attrs):
-        identifier = attrs["identifier"]#❓why what how dict using why not like attrs.identifier?
         otp_code = attrs["otp_code"]
 
         try:
-            otp = OTPVerification.objects.get(
-                identifier=identifier,
+            # Note: without identifier, we assume OTPs are unique enough for concurrent signups
+            # or we get the latest one if there are somehow duplicates.
+            otp = OTPVerification.objects.filter(
                 otp_code=otp_code,
                 purpose=OTPVerification.Purpose.SIGNUP,
                 is_verified=False,
-            )
+            ).latest("created_at")
         except OTPVerification.DoesNotExist:
             raise serializers.ValidationError({"otp_code": "Invalid OTP."})
 
         if otp.is_expired():
             raise serializers.ValidationError({"otp_code": "OTP has expired. Please request a new one."})
 
-        attrs["_otp"] = otp#❓why what how this line , why _ using before otp 
+        # Fetch cached pending data
+        from django.core.cache import cache
+        pending_data = cache.get(f"signup_{otp_code}")
+        if not pending_data:
+            raise serializers.ValidationError({"otp_code": "Signup session expired. Please sign up again."})
+
+        attrs["_otp"] = otp
+        attrs["pending_data"] = pending_data
         return attrs
 
     @transaction.atomic
     def save(self):
         data = self.validated_data
-        otp: OTPVerification = data["_otp"]#❓why what how this line , otp:OTPVerification why how 
+        otp: OTPVerification = data["_otp"]
+        pending_data = data["pending_data"]
 
-        user = User.objects.create_user(#❓why what how so model property always dict not list that why [] used to acces ?
-            username=data["username"],
-            password=data["password"],
-            email=data.get("email") or None,
-            phone=data.get("phone") or None,
-            first_name=data.get("first_name", ""),
-            last_name=data.get("last_name", ""),
+        user = User.objects.create_user(
+            username=pending_data["username"],
+            password=pending_data["password"],
+            email=pending_data.get("email") or None,
+            phone=pending_data.get("phone") or None,
+            first_name=pending_data.get("first_name", ""),
+            last_name=pending_data.get("last_name", ""),
             is_verified=True,
         )
 
@@ -165,7 +170,8 @@ class VerifySignupOTPSerializer(serializers.Serializer):
         otp.user = user
         otp.save(update_fields=["is_verified", "user"])
 
-        return user, _issue_tokens(user)
+        # Also return pending_data so the view can return all details got from signup
+        return user, _issue_tokens(user), pending_data
 
 
 # ─────────────────────────────────────────────

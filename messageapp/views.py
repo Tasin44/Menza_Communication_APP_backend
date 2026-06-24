@@ -37,6 +37,7 @@ from rest_framework.pagination import CursorPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from aamyproject.mixins import StandardResponseMixin
 
 from authapp.models import BlockedUser
 from .models import (
@@ -95,7 +96,7 @@ class StandardPagePagination(CursorPagination):
 # ─────────────────────────────────────────────────────────────
 # BASE VIEW  (shared helpers — OOP mixin)
 # ─────────────────────────────────────────────────────────────
-class BaseMessagingView(APIView):
+class BaseMessagingView(StandardResponseMixin, APIView):
     """
     Base class with shared helpers.
     All messaging views inherit from this.
@@ -105,37 +106,19 @@ class BaseMessagingView(APIView):
 
     # ── Response helpers ──────────────────────────────────────
     def ok(self, data, message="Success"):
-        return Response({
-            "success": True,
-            "message": message,
-            "data": data,
-        }, status=status.HTTP_200_OK)
+        return self.success_response(data, message=message)
 
     def created(self, data, message="Created"):
-        return Response({
-            "success": True,
-            "message": message,
-            "data": data,
-        }, status=status.HTTP_201_CREATED)
+        return self.success_response(data, message=message, status_code=status.HTTP_201_CREATED)
 
     def bad_request(self, errors, message="Validation error"):
-        return Response({
-            "success": False,
-            "message": message,
-            "errors": errors,
-        }, status=status.HTTP_400_BAD_REQUEST)
+        return self.error_response(message, status_code=status.HTTP_400_BAD_REQUEST, data=errors)
 
     def not_found(self, message="Not found"):
-        return Response({
-            "success": False,
-            "message": message,
-        }, status=status.HTTP_404_NOT_FOUND)
+        return self.error_response(message, status_code=status.HTTP_404_NOT_FOUND)
 
     def forbidden(self, message="Permission denied"):
-        return Response({
-            "success": False,
-            "message": message,
-        }, status=status.HTTP_403_FORBIDDEN)
+        return self.error_response(message, status_code=status.HTTP_403_FORBIDDEN)
 
     # ── Conversation access guard ──────────────────────────────
     def get_conversation_or_403(self, conversation_id, user):
@@ -281,7 +264,8 @@ class ConversationListCreateView(BaseMessagingView):
             data=request.data,
             context={"request": request},
         )
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
         conversation, created = serializer.save()
 
         response_serializer = ConversationDetailSerializer(
@@ -335,10 +319,7 @@ class ConversationDetailView(BaseMessagingView):
         participant.left_at = timezone.now()
         participant.save(update_fields=["is_active", "left_at"])
 
-        return Response(
-            {"success": True, "message": "Conversation deleted."},
-            status=status.HTTP_204_NO_CONTENT,
-        )
+        return self.success_response(data={}, message="Conversation deleted.", status_code=status.HTTP_204_NO_CONTENT)
 
 
 
@@ -377,7 +358,8 @@ class ConversationActionView(BaseMessagingView):
     def _mute(self, request, pk):
         """Mute notifications for this conversation."""
         serializer = MuteConversationSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
 
         try:
             participant = ConversationParticipant.objects.get(
@@ -535,7 +517,8 @@ class SendMessageView(BaseMessagingView):
             data=request.data,
             context={"request": request},
         )
-        serializer.is_valid(raise_exception=True)#❔sendmessageserializer has two method validate and validate_files, then which one is calling by is_valid here ?
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
         message = serializer.save()
 
         # ── Reload with all related data for response ─────────────
@@ -667,10 +650,7 @@ class MessageDetailView(BaseMessagingView):
                 },
             )
 
-        return Response(
-            {"success": True, "message": "Message deleted."},
-            status=status.HTTP_204_NO_CONTENT,
-        )
+        return self.success_response(data={}, message="Message deleted.", status_code=status.HTTP_204_NO_CONTENT)
 
 
 
@@ -806,7 +786,8 @@ class MessageReactionView(BaseMessagingView):
             return err
 
         serializer = MessageReactionWriteSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
         reaction, created = serializer.save(message=message, user=request.user)
 
         # ── Broadcast reaction via WebSocket ──────────────────────
@@ -839,10 +820,7 @@ class MessageReactionView(BaseMessagingView):
         if not deleted:
             return self.not_found("You haven't reacted to this message.")
 
-        return Response(
-            {"success": True, "message": "Reaction removed."},
-            status=status.HTTP_204_NO_CONTENT,
-        )
+        return self.success_response(data={}, message="Reaction removed.", status_code=status.HTTP_204_NO_CONTENT)
 
 
 
@@ -895,10 +873,7 @@ class PinMessageView(BaseMessagingView):
         if deleted:
             # Remove pin flag from message
             Message.objects.filter(id=msg_id).update(is_pinned=False)
-            return Response(
-                {"success": True, "message": "Message unpinned."},
-                status=status.HTTP_204_NO_CONTENT,
-            )
+            return self.success_response(data={}, message="Message unpinned.", status_code=status.HTTP_204_NO_CONTENT)
         return self.not_found("Pin not found.")
 
 
@@ -930,7 +905,8 @@ class PinnedItemView(BaseMessagingView):
             data=request.data,
             context={"request": request},
         )
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
         pin = serializer.save()
         return self.created(
             PinnedItemSerializer(pin).data,
@@ -943,10 +919,7 @@ class PinnedItemView(BaseMessagingView):
         except PinnedItem.DoesNotExist:
             return self.not_found()
         pin.delete()
-        return Response(
-            {"success": True, "message": "Item unpinned."},
-            status=status.HTTP_204_NO_CONTENT,
-        )
+        return self.success_response(data={}, message="Item unpinned.", status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ─────────────────────────────────────────────────────────────

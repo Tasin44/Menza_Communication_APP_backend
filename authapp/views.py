@@ -40,6 +40,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from aamyproject.mixins import StandardResponseMixin
 
 from .models import User, Contact, BlockedUser
 from .serializers import (
@@ -71,7 +72,7 @@ def _send_otp(identifier: str, otp_code: str, purpose: str):
 # ─────────────────────────────────────────────
 # SIGNUP
 # ─────────────────────────────────────────────
-class SignupView(APIView):
+class SignupView(StandardResponseMixin, APIView):
     """
     POST /auth/signup/
     Body: { username, email|phone, password, first_name?, last_name? }
@@ -88,7 +89,8 @@ class SignupView(APIView):
 
     def post(self, request):
         serializer = SignupSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)#❓i see SignupSerializer contains several valid method, which valid method this is_valid catching?
+        if not serializer.is_valid():
+            return self.error_response("Validation Error", data=serializer.errors)
 
         otp_code, identifier, pending_data = serializer.save()
 
@@ -97,46 +99,49 @@ class SignupView(APIView):
         # For now we return pending_data to client and expect it back in verify step.
         # The client sends it again with the OTP — see VerifySignupOTPSerializer.
         _send_otp(identifier, otp_code, "signup")#❓why _used before _send_otp
-        return Response(
-            {
-                "detail": f"OTP sent to {identifier}. Please verify within 10 minutes.",
-                "identifier": identifier,
-            },
-            status=status.HTTP_200_OK,
+        return self.success_response(
+            data={"identifier": identifier},
+            message=f"OTP sent to {identifier}. Please verify within 10 minutes."
         )
 
 
-class VerifySignupOTPView(APIView):
+class VerifySignupOTPView(StandardResponseMixin, APIView):
     """
     POST /auth/signup/verify/
-    Body: { identifier, otp_code, username, email?, phone?, password, first_name?, last_name? }
+    Body: { otp_code }
 
-    On success: creates user, returns JWT tokens.
+    On success: creates user, returns JWT tokens and signup details.
     """
 
     permission_classes = [AllowAny]
 
     def post(self, request):
         serializer = VerifySignupOTPSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)#❓why what how reaise_exception true means here 
+        if not serializer.is_valid():
+            return self.error_response("Validation Error", data=serializer.errors)
 
-        user, tokens = serializer.save()#❓I've not seen any tokens field on the VerifySignupOTPSerializer, then why it's using here , also why user,token=serializer.save(), why not other field 
+        user, tokens, pending_data = serializer.save()
+        
+        # User requested: "return user id, all the details got from signup and acceess refresh token"
+        pending_data.pop("password", None) # Do not return password
+        response_data = {
+            "user_id": user.id,
+            "signup_details": pending_data,
+            "tokens": tokens,
+            "user": UserProfileSerializer(user).data,
+        }
 
-
-        return Response(
-            {
-                "detail": "Account created successfully.",
-                "tokens": tokens,
-                "user": UserProfileSerializer(user).data,
-            },
-            status=status.HTTP_201_CREATED,
+        return self.success_response(
+            data=response_data,
+            message="Account created successfully.",
+            status_code=status.HTTP_201_CREATED
         )
 
 
 # ─────────────────────────────────────────────
 # LOGIN
 # ─────────────────────────────────────────────
-class LoginView(APIView):
+class LoginView(StandardResponseMixin, APIView):
     """
     POST /auth/login/
     Body: { username, password, device_token?, platform? }
@@ -147,23 +152,24 @@ class LoginView(APIView):
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.error_response("Validation Error", data=serializer.errors)
 
         user, tokens = serializer.save()
 
-        return Response(
-            {
+        return self.success_response(
+            data={
                 "tokens": tokens,
                 "user": UserProfileSerializer(user).data,
             },
-            status=status.HTTP_200_OK,
+            message="Login successful."
         )
 
 
 # ─────────────────────────────────────────────
 # LOGOUT
 # ─────────────────────────────────────────────
-class LogoutView(APIView):
+class LogoutView(StandardResponseMixin, APIView):
     """
     POST /auth/logout/
     Body: { refresh }
@@ -176,25 +182,19 @@ class LogoutView(APIView):
     def post(self, request):
         refresh_token = request.data.get("refresh")
         if not refresh_token:
-            return Response(
-                {"detail": "Refresh token is required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return self.error_response("Refresh token is required.")
         try:
             token = RefreshToken(refresh_token)
             token.blacklist()
         except TokenError:
-            return Response(
-                {"detail": "Token is invalid or already expired."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return Response({"detail": "Logged out successfully."}, status=status.HTTP_200_OK)
+            return self.error_response("Token is invalid or already expired.")
+        return self.success_response(data={}, message="Logged out successfully.")
 
 
 # ─────────────────────────────────────────────
 # FORGOT PASSWORD
 # ─────────────────────────────────────────────
-class ForgotPasswordView(APIView):
+class ForgotPasswordView(StandardResponseMixin, APIView):
     """
     POST /auth/forgot-password/
     Body: { identifier }  ← email or phone number
@@ -214,25 +214,22 @@ class ForgotPasswordView(APIView):
             # If only error is our vague "if account exists" message, return 200
             errors = serializer.errors
             if list(errors.keys()) == ["identifier"]:
-                return Response(
-                    {"detail": "If an account with this detail exists, an OTP has been sent."},
-                    status=status.HTTP_200_OK,
+                return self.success_response(
+                    data={},
+                    message="If an account with this detail exists, an OTP has been sent."
                 )
-            return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+            return self.error_response("Validation Error", data=errors)
 
         otp_code, identifier = serializer.save()
         _send_otp(identifier, otp_code, "forgot_password")
 
-        return Response(
-            {
-                "detail": "If an account with this detail exists, an OTP has been sent.",
-                "identifier": identifier,
-            },
-            status=status.HTTP_200_OK,
+        return self.success_response(
+            data={"identifier": identifier},
+            message="If an account with this detail exists, an OTP has been sent."
         )
 
 
-class VerifyForgotPasswordOTPView(APIView):
+class VerifyForgotPasswordOTPView(StandardResponseMixin, APIView):
     """
     POST /auth/forgot-password/verify/
     Body: { identifier, otp_code }
@@ -244,20 +241,18 @@ class VerifyForgotPasswordOTPView(APIView):
 
     def post(self, request):
         serializer = VerifyForgotPasswordOTPSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.error_response("Validation Error", data=serializer.errors)
 
         otp = serializer.save()
 
-        return Response(
-            {
-                "detail": "OTP verified. Proceed to reset your password.",
-                "reset_token": otp.id,   # used in next step
-            },
-            status=status.HTTP_200_OK,
+        return self.success_response(
+            data={"reset_token": otp.id},
+            message="OTP verified. Proceed to reset your password."
         )
 
 
-class ResetPasswordView(APIView):
+class ResetPasswordView(StandardResponseMixin, APIView):
     """
     POST /auth/reset-password/
     Body: { reset_token, new_password, confirm_password }
@@ -269,19 +264,17 @@ class ResetPasswordView(APIView):
 
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.error_response("Validation Error", data=serializer.errors)
         serializer.save()
 
-        return Response(
-            {"detail": "Password reset successfully. Please log in."},
-            status=status.HTTP_200_OK,
-        )
+        return self.success_response(data={}, message="Password reset successfully. Please log in.")
 
 
 # ─────────────────────────────────────────────
 # USER PROFILE
 # ─────────────────────────────────────────────
-class ProfileView(APIView):
+class ProfileView(StandardResponseMixin, APIView):
     """
     GET  /auth/profile/   → return own full profile
     Spec fields shown: username, image, email, phone
@@ -292,10 +285,10 @@ class ProfileView(APIView):
 
     def get(self, request):
         serializer = UserProfileSerializer(request.user)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return self.success_response(data=serializer.data, message="Profile fetched successfully.")
 
 
-class UpdateAvatarView(APIView):
+class UpdateAvatarView(StandardResponseMixin, APIView):
     """
     PATCH /auth/profile/avatar/
     Body: { profile_image: "https://..." }
@@ -308,21 +301,19 @@ class UpdateAvatarView(APIView):
 
     def patch(self, request):
         serializer = UpdateAvatarSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.error_response("Validation Error", data=serializer.errors)
         user = serializer.save(user=request.user)
-        return Response(
-            {
-                "detail": "Profile image updated.",
-                "profile_image": user.profile_image,
-            },
-            status=status.HTTP_200_OK,
+        return self.success_response(
+            data={"profile_image": user.profile_image},
+            message="Profile image updated."
         )
 
 
 # ─────────────────────────────────────────────
 # USER SEARCH
 # ─────────────────────────────────────────────
-class UserSearchView(APIView):
+class UserSearchView(StandardResponseMixin, APIView):
     """
     GET /auth/users/search/?q=<username_or_phone>
 
@@ -339,30 +330,12 @@ class UserSearchView(APIView):
         query = request.query_params.get("q", "").strip()
 
         if len(query) < 2:
-            return Response(
-                {"detail": "Search query must be at least 2 characters."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return self.error_response("Search query must be at least 2 characters.")
 
         # Get ids of users this person has blocked (hide them from search too)
         blocked_ids = BlockedUser.objects.filter(
             blocker=request.user
         ).values_list("blocked_id", flat=True)#❓what does .values_list use here means ?
-
-        # Search by username (partial, case-insensitive) or exact phone
-        users = (#❓explain this whole users() part 
-            User.objects.filter(
-                status=User.Status.ACTIVE,
-                is_verified=True,
-            )
-            .filter(
-                # username partial match OR exact phone match
-                # Using Q objects — import added below
-                **{}
-            )
-            .exclude(id=request.user.id)   # exclude self
-            .exclude(id__in=blocked_ids)
-        )
 
         from django.db.models import Q
         users = User.objects.filter(
@@ -376,13 +349,13 @@ class UserSearchView(APIView):
         )[:20]   # cap at 20 results
 
         serializer = PublicUserSearchSerializer(users, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return self.success_response(data=serializer.data, message="Users fetched successfully.")
 
 
 # ─────────────────────────────────────────────
 # CONTACTS
 # ─────────────────────────────────────────────
-class ContactListCreateView(APIView):
+class ContactListCreateView(StandardResponseMixin, APIView):
     """
     GET  /auth/contacts/   → list all contacts for logged-in user
     POST /auth/contacts/   → create a new contact
@@ -404,21 +377,23 @@ class ContactListCreateView(APIView):
         serializer = ContactSerializer(
             contacts, many=True, context={"request": request}#❓what does meany true means here , when I've to pass it 
         )
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return self.success_response(data=serializer.data, message="Contacts fetched successfully.")
 
     def post(self, request):
         serializer = ContactSerializer(
             data=request.data, context={"request": request}
         )
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.error_response("Validation Error", data=serializer.errors)
         contact = serializer.save()
-        return Response(
-            ContactSerializer(contact, context={"request": request}).data,
-            status=status.HTTP_201_CREATED,
+        return self.success_response(
+            data=ContactSerializer(contact, context={"request": request}).data,
+            message="Contact created successfully.",
+            status_code=status.HTTP_201_CREATED
         )
 
 
-class ContactDetailView(APIView):
+class ContactDetailView(StandardResponseMixin, APIView):
     """
     DELETE /auth/contacts/<id>/   → remove a contact
 
@@ -436,21 +411,15 @@ class ContactDetailView(APIView):
     def delete(self, request, pk):
         contact = self._get_contact(request, pk)
         if not contact:
-            return Response(
-                {"detail": "Contact not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return self.error_response("Contact not found.", status_code=status.HTTP_404_NOT_FOUND)
         contact.delete()
-        return Response(
-            {"detail": "Contact removed."},
-            status=status.HTTP_204_NO_CONTENT,
-        )
+        return self.success_response(data={}, message="Contact removed.")
 
 
 # ─────────────────────────────────────────────
 # BLOCKED USERS
 # ─────────────────────────────────────────────
-class BlockedUserListView(APIView):
+class BlockedUserListView(StandardResponseMixin, APIView):
     """
     GET /auth/blocked/
     Spec: Blocked user list (shown on profile page).
@@ -465,10 +434,10 @@ class BlockedUserListView(APIView):
             .order_by("-created_at")
         )
         serializer = BlockedUserSerializer(blocked, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return self.success_response(data=serializer.data, message="Blocked users fetched successfully.")
 
 
-class BlockUserView(APIView):
+class BlockUserView(StandardResponseMixin, APIView):
     """
     POST   /auth/block/         → block a user { user_id }
     DELETE /auth/block/<id>/    → unblock by BlockedUser.id
@@ -480,29 +449,22 @@ class BlockUserView(APIView):
         serializer = BlockUserSerializer(
             data=request.data, context={"request": request}
         )
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.error_response("Validation Error", data=serializer.errors)
         obj, created = serializer.save(blocker=request.user)
 
         if not created:
-            return Response(
-                {"detail": "User is already blocked."},
-                status=status.HTTP_200_OK,
-            )
-        return Response(
-            {"detail": "User blocked successfully."},
-            status=status.HTTP_201_CREATED,
+            return self.success_response(data={}, message="User is already blocked.")
+        return self.success_response(
+            data={},
+            message="User blocked successfully.",
+            status_code=status.HTTP_201_CREATED
         )
 
     def delete(self, request, pk):
         try:
             block = BlockedUser.objects.get(id=pk, blocker=request.user)
         except BlockedUser.DoesNotExist:
-            return Response(
-                {"detail": "Block record not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return self.error_response("Block record not found.", status_code=status.HTTP_404_NOT_FOUND)
         block.delete()
-        return Response(
-            {"detail": "User unblocked."},
-            status=status.HTTP_204_NO_CONTENT,
-        )
+        return self.success_response(data={}, message="User unblocked.")

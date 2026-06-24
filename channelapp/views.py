@@ -25,6 +25,7 @@ from rest_framework.pagination import CursorPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from aamyproject.mixins import StandardResponseMixin
 
 from .models import (
     Channel,
@@ -61,23 +62,23 @@ class ChannelFeedPagination(CursorPagination):
     # ─────────────────────────────────────────────────────────────
 # BASE
 # ─────────────────────────────────────────────────────────────
-class BaseChannelView(APIView):
+class BaseChannelView(StandardResponseMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def ok(self, data, message="Success"):
-        return Response({"success": True, "message": message, "data": data})
+        return self.success_response(data, message=message)
 
     def created(self, data, message="Created"):
-        return Response({"success": True, "message": message, "data": data}, status=status.HTTP_201_CREATED)
+        return self.success_response(data, message=message, status_code=status.HTTP_201_CREATED)
 
     def bad_request(self, errors, message="Validation error"):
-        return Response({"success": False, "message": message, "errors": errors}, status=status.HTTP_400_BAD_REQUEST)
+        return self.error_response(message, status_code=status.HTTP_400_BAD_REQUEST, data=errors)
 
     def not_found(self, message="Not found"):
-        return Response({"success": False, "message": message}, status=status.HTTP_404_NOT_FOUND)
+        return self.error_response(message, status_code=status.HTTP_404_NOT_FOUND)
 
     def forbidden(self, message="Permission denied"):
-        return Response({"success": False, "message": message}, status=status.HTTP_403_FORBIDDEN)
+        return self.error_response(message, status_code=status.HTTP_403_FORBIDDEN)
 
     def get_channel_or_404(self, pk):
         return Channel.objects.filter(pk=pk, deleted_at__isnull=True).select_related("created_by").first()
@@ -141,7 +142,8 @@ class ChannelListCreateView(BaseChannelView):
 
     def post(self, request):
         serializer = CreateChannelSerializer(data=request.data, context={"request": request})
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
         channel = serializer.save()
         return self.created(
             ChannelDetailSerializer(channel, context={"request": request}).data,
@@ -181,7 +183,7 @@ class ChannelDetailView(BaseChannelView):
         if err:
             return err
         channel.soft_delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return self.success_response(data={}, message="Channel deleted.", status_code=status.HTTP_204_NO_CONTENT)
 
 class ToggleDiscoverableView(BaseChannelView):
     """
@@ -194,7 +196,8 @@ class ToggleDiscoverableView(BaseChannelView):
         if err:
             return err
         serializer = ToggleDiscoverableSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
         serializer.save(channel=channel)
         return self.ok(ChannelDetailSerializer(channel, context={"request": request}).data, "Channel is now discoverable.")
 
@@ -224,7 +227,7 @@ class SubscribeView(BaseChannelView):
         if not channel:
             return self.not_found()
         ChannelSubscriber.unsubscribe(channel, request.user)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return self.success_response(data={}, message="Unsubscribed.", status_code=status.HTTP_204_NO_CONTENT)
 
 # ─────────────────────────────────────────────────────────────
 # POSTS  (feed + create)
@@ -264,7 +267,8 @@ class ChannelPostListCreateView(BaseChannelView):
         serializer = CreateChannelPostSerializer(
             data=request.data, context={"request": request, "channel": channel}
         )
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
         post = serializer.save()
         return self.created(ChannelPostSerializer(post, context={"request": request}).data, "Post created.")
 
@@ -287,7 +291,7 @@ class DeletePostView(BaseChannelView):
         if not post:
             return self.not_found()
         post.soft_delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return self.success_response(data={}, message="Post deleted.", status_code=status.HTTP_204_NO_CONTENT)
 
 # ─────────────────────────────────────────────────────────────
 # REACTIONS
@@ -309,7 +313,7 @@ class PostReactionView(BaseChannelView):
         ).delete()
         if not deleted:
             return self.not_found("You haven't reacted to this post.")
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return self.success_response(data={}, message="Reaction removed.", status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -329,7 +333,8 @@ class PostCommentView(BaseChannelView):
         serializer = ChannelPostCommentSerializer(
             data=request.data, context={"request": request, "post": post}
         )
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
         comment = serializer.save()
         return self.created(ChannelPostCommentSerializer(comment).data, "Comment added.")
 
@@ -350,7 +355,8 @@ class BoostChannelView(BaseChannelView):
         serializer = CreateBoostPaymentSerializer(
             data=request.data, context={"request": request, "channel": channel}
         )
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
         payment = serializer.save()
         return self.created(CreateBoostPaymentSerializer(payment).data, "Boost payment created — pending confirmation.")
 

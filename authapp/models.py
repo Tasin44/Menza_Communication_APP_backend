@@ -9,7 +9,8 @@ from django.utils import timezone
 # ─────────────────────────────────────────────
 # CUSTOM USER MANAGER
 # ─────────────────────────────────────────────
-class UserManager(BaseUserManager):#❓ what does BaseUserManager means 
+# BaseUserManager provides core helper methods like normalize_email and set_password for custom user models.
+class UserManager(BaseUserManager): 
     """
     Custom manager because we use username as the login identifier,
     but email OR phone is required (not both).
@@ -24,18 +25,21 @@ class UserManager(BaseUserManager):#❓ what does BaseUserManager means
         if email:
             email = self.normalize_email(email)
 
-        user = self.model(#❓ what does self.model() means, which model it's using 
+        # self.model points to the User model because we assigned this manager to User.objects below.
+        user = self.model( 
             username=username,
             email=email,
             phone=phone,
-            **extra_fields,#❓ what does extra_fields means 
+            **extra_fields,  # extra_fields catches any additional keyword arguments passed to the function (like is_staff) 
         )
-        #❓explan below 2 lines 
+        # set_password securely hashes the password using Argon2.
+        # save() writes the user row to the database. 
         user.set_password(password)  # hashes with Argon2 (set in settings)
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, username, password, email=None, phone=None, **extra_fields):#❓ why this method required explain it 
+    # create_superuser is required by Django so `manage.py createsuperuser` knows how to create an admin user.
+    def create_superuser(self, username, password, email=None, phone=None, **extra_fields): 
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         extra_fields.setdefault("is_verified", True)
@@ -97,10 +101,13 @@ class User(AbstractBaseUser, PermissionsMixin):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    objects = UserManager()#❓ what does it means 
+    # This links the User model to our custom UserManager above, allowing User.objects.create_user()
+    objects = UserManager() 
 
-    USERNAME_FIELD = "username"#❓ why it's defined here 
-    REQUIRED_FIELDS = []   # email/phone handled in manager
+    # Tells Django to use 'username' as the primary login identifier instead of the default username.
+    USERNAME_FIELD = "username" 
+    # This tells `manage.py createsuperuser` to prompt for email in the terminal.
+    REQUIRED_FIELDS = ["email"]
 
     class Meta:
         db_table = "users"
@@ -173,7 +180,8 @@ class OTPVerification(models.Model):
     - identifier stores the email/phone the OTP was sent to
     """
 
-    class Purpose(models.TextChoices):#❓what is the necessity of that class? why it is inside OTPVerification class, what does this class called as it is inside another class 
+    # This is an inner class (Nested Class) used to organize choices for the 'purpose' field neatly inside OTPVerification.
+    class Purpose(models.TextChoices): 
         SIGNUP = "signup", "Signup"
         FORGOT_PASSWORD = "forgot_password", "Forgot Password"
         CHANGE_EMAIL = "change_email", "Change Email"
@@ -190,7 +198,8 @@ class OTPVerification(models.Model):
     # The email or phone the code was sent to
     identifier = models.CharField(max_length=255)
     otp_code = models.CharField(max_length=6)
-    purpose = models.CharField(max_length=30, choices=Purpose.choices)#❓Purpose class has no choices method I see, then how using it here 
+    # Purpose inherits from models.TextChoices, which automatically generates the .choices attribute for us behind the scenes.
+    purpose = models.CharField(max_length=30, choices=Purpose.choices) 
     is_verified = models.BooleanField(default=False)
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
@@ -249,11 +258,14 @@ class Contact(models.Model):
     class Meta:
         db_table = "contacts"
         # A user can't add the same Menza user twice
-        unique_together = [("owner", "contact_user")]#❓why it's using here 
+        # unique_together ensures one owner cannot add the same contact_user multiple times (prevents duplicates).
+        unique_together = [("owner", "contact_user")] 
         indexes = [models.Index(fields=["owner"])]
-        constraints = [#❓constraints,unique_together,indexes are they built in meta class method? whats their purpose 
+        # Yes, they are built-in Meta attributes. They define database-level rules: uniqueness, indexing for speed, and custom constraints.
+        constraints = [ 
             # Can't add yourself
-            models.CheckConstraint(#❓explain this part 
+            # This prevents a user from adding themselves as a contact. F() compares two columns in the same row. ~ means NOT.
+            models.CheckConstraint( 
                 check=~models.Q(owner=models.F("contact_user")),
                 name="contact_not_self",
             )
@@ -277,12 +289,14 @@ class BlockedUser(models.Model):
     blocker = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name="blocking",#❓why here related_name used blocking why not blocked_by? as blocker is the user who blocked 
+        # related_name="blocking" means user.blocking.all() will return all the users THIS user has blocked.
+        related_name="blocking", 
     )
     blocked = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name="blocked_by",#❓why what how here related_name blocked_by instead of blocked_user ?
+        # related_name="blocked_by" means user.blocked_by.all() will return all the users who have blocked THIS user.
+        related_name="blocked_by",
     )
     created_at = models.DateTimeField(auto_now_add=True)
 

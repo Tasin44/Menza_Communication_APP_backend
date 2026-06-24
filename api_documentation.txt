@@ -1,0 +1,463 @@
+# Menza API Documentation
+
+This document provides a comprehensive list of all API endpoints across the project (`authapp`, `channelapp`, `groupapp`, `messageapp`), including their methods, expected request bodies, standard responses, and a short description of their purpose. 
+
+All endpoints assume the base URL of the API. Authentication is required for most endpoints via JWT (`Bearer <access_token>`). All successful custom responses generally follow the format `{ "success": true, "message": "...", "data": {...} }`.
+
+---
+
+## Auth App (`/api/auth/`)
+
+### 1. Signup (Step 1)
+- **Endpoint:** `/api/auth/signup/`
+- **Method:** `POST`
+- **Description:** First step of user registration. Validates data and sends an OTP to the email or phone number.
+- **Request Body:**
+  ```json
+  {
+    "username": "johndoe123",
+    "password": "securepassword",
+    "email": "johndoe@example.com", // Optional if phone is provided
+    "phone": "+1234567890", // Optional if email is provided
+    "first_name": "John",
+    "last_name": "Doe"
+  }
+  ```
+- **Response:** `200 OK` (OTP is generated and sent).
+
+### 2. Verify Signup OTP (Step 2)
+- **Endpoint:** `/api/auth/signup/verify/`
+- **Method:** `POST`
+- **Description:** Verifies the OTP and creates the user account, returning JWT tokens.
+- **Request Body:**
+  ```json
+  {
+    "identifier": "johndoe@example.com",
+    "otp_code": "123456",
+    "username": "johndoe123",
+    "password": "securepassword",
+    "email": "johndoe@example.com",
+    "phone": "",
+    "first_name": "John",
+    "last_name": "Doe"
+  }
+  ```
+- **Response:** `200 OK`
+  ```json
+  {
+    "user": { ... },
+    "tokens": { "refresh": "...", "access": "..." }
+  }
+  ```
+
+### 3. Login
+- **Endpoint:** `/api/auth/login/`
+- **Method:** `POST`
+- **Description:** Authenticates a user with username and password and returns JWT tokens.
+- **Request Body:**
+  ```json
+  {
+    "username": "johndoe123",
+    "password": "securepassword",
+    "device_token": "optional_fcm_token",
+    "platform": "ios"
+  }
+  ```
+- **Response:** `200 OK`
+  ```json
+  {
+    "user": { ... },
+    "tokens": { "refresh": "...", "access": "..." }
+  }
+  ```
+
+### 4. Logout
+- **Endpoint:** `/api/auth/logout/`
+- **Method:** `POST`
+- **Description:** Logs out the user by blacklisting the refresh token.
+- **Request Body:** `{ "refresh": "<refresh_token>" }`
+- **Response:** `204 No Content`
+
+### 5. Refresh Token
+- **Endpoint:** `/api/auth/token/refresh/`
+- **Method:** `POST`
+- **Description:** Obtains a new access token using a valid refresh token.
+- **Request Body:** `{ "refresh": "<refresh_token>" }`
+- **Response:** `200 OK` with `{ "access": "<new_access_token>" }`
+
+### 6. Forgot Password (Step 1)
+- **Endpoint:** `/api/auth/forgot-password/`
+- **Method:** `POST`
+- **Description:** Requests an OTP to reset the password using email or phone.
+- **Request Body:** `{ "identifier": "johndoe@example.com" }`
+- **Response:** `200 OK` (OTP sent)
+
+### 7. Verify Forgot Password OTP (Step 2)
+- **Endpoint:** `/api/auth/forgot-password/verify/`
+- **Method:** `POST`
+- **Description:** Verifies the OTP and returns a reset token.
+- **Request Body:** `{ "identifier": "johndoe@example.com", "otp_code": "123456" }`
+- **Response:** `200 OK` with a `reset_token` (OTP ID)
+
+### 8. Reset Password (Step 3)
+- **Endpoint:** `/api/auth/reset-password/`
+- **Method:** `POST`
+- **Description:** Resets the password using the token provided in step 2.
+- **Request Body:** 
+  ```json
+  {
+    "reset_token": 12,
+    "new_password": "newsecurepassword",
+    "confirm_password": "newsecurepassword"
+  }
+  ```
+- **Response:** `200 OK`
+
+### 9. Get Profile
+- **Endpoint:** `/api/auth/profile/`
+- **Method:** `GET`
+- **Description:** Retrieves the authenticated user's profile details.
+- **Request Body:** None
+- **Response:** `200 OK` (User object)
+
+### 10. Update Profile Avatar
+- **Endpoint:** `/api/auth/profile/avatar/`
+- **Method:** `PATCH`
+- **Description:** Updates the profile image URL for the authenticated user.
+- **Request Body:** `{ "profile_image": "https://url-to-image.com/img.jpg" }`
+- **Response:** `200 OK`
+
+### 11. Search Users
+- **Endpoint:** `/api/auth/users/search/?q=<query>`
+- **Method:** `GET`
+- **Description:** Searches for users by username or phone to start a conversation.
+- **Request Body:** None
+- **Response:** `200 OK` List of `{ "id": 1, "username": "foo", "profile_image": "..." }`
+
+### 12. Contact List / Create
+- **Endpoint:** `/api/auth/contacts/`
+- **Method:** `GET`, `POST`
+- **Description:** Lists the user's contacts or creates a new one. Automatically matches phone numbers to app users.
+- **Request Body (POST):**
+  ```json
+  {
+    "contact_first_name": "Jane",
+    "contact_last_name": "Smith",
+    "contact_phone": "+19876543210"
+  }
+  ```
+- **Response:** `200/201 OK` (List of contacts or newly created contact).
+
+### 13. Delete Contact
+- **Endpoint:** `/api/auth/contacts/<id>/`
+- **Method:** `DELETE`
+- **Description:** Removes a contact from the user's list.
+- **Request Body:** None
+- **Response:** `204 No Content`
+
+### 14. List Blocked Users
+- **Endpoint:** `/api/auth/blocked/`
+- **Method:** `GET`
+- **Description:** Lists all users blocked by the authenticated user.
+- **Request Body:** None
+- **Response:** `200 OK` (List of blocked users)
+
+### 15. Block User
+- **Endpoint:** `/api/auth/block/`
+- **Method:** `POST`
+- **Description:** Blocks a specific user.
+- **Request Body:** `{ "user_id": 2 }`
+- **Response:** `201 Created`
+
+### 16. Unblock User
+- **Endpoint:** `/api/auth/block/<id>/`
+- **Method:** `DELETE`
+- **Description:** Unblocks a previously blocked user using the BlockedUser row ID.
+- **Request Body:** None
+- **Response:** `204 No Content`
+
+---
+
+## Channel App (`/api/channels/`)
+
+### 1. List / Create Channels
+- **Endpoint:** `/api/channels/`
+- **Method:** `GET`, `POST`
+- **Description:** `GET` retrieves a list of discoverable channels (or `?mine=true` for subscribed channels). `POST` creates a new channel.
+- **Request Body (POST):**
+  ```json
+  {
+    "name": "Tech News",
+    "handle": "technews",
+    "description": "Latest in tech.",
+    "channel_type": "public",
+    "category": "technology"
+  }
+  ```
+- **Response:** `200/201 OK`
+
+### 2. Channel Detail
+- **Endpoint:** `/api/channels/<id>/`
+- **Method:** `GET`, `PATCH`, `DELETE`
+- **Description:** `GET` details of a channel. `PATCH` updates it (owner only). `DELETE` soft-deletes the channel (owner only).
+- **Request Body (PATCH):** `{ "description": "New description", "logo": "https://..." }`
+- **Response:** `200 OK` (or `204 No Content` for DELETE)
+
+### 3. Toggle Discoverable
+- **Endpoint:** `/api/channels/<id>/discoverable/`
+- **Method:** `POST`, `DELETE`
+- **Description:** `POST` makes a channel discoverable (public). `DELETE` makes it private.
+- **Request Body (POST):** `{ "confirmed": true }`
+- **Response:** `200 OK`
+
+### 4. Subscribe / Unsubscribe
+- **Endpoint:** `/api/channels/<id>/subscribe/`
+- **Method:** `POST`, `DELETE`
+- **Description:** `POST` subscribes the user to a channel. `DELETE` unsubscribes.
+- **Request Body:** None
+- **Response:** `201 Created` or `204 No Content`
+
+### 5. Channel Posts (Feed & Create)
+- **Endpoint:** `/api/channels/<id>/posts/`
+- **Method:** `GET`, `POST`
+- **Description:** `GET` fetches the cursor-paginated post feed for the channel. `POST` creates a new post (owner only).
+- **Request Body (POST):**
+  ```json
+  {
+    "content_encrypted": "encrypted string...",
+    "post_type": "text",
+    "published_at": "2026-06-24T12:00:00Z" // Optional
+  }
+  ```
+- **Response:** `200/201 OK` (Paginated list or created post)
+
+### 6. Pin Post
+- **Endpoint:** `/api/channels/<id>/posts/<post_id>/pin/`
+- **Method:** `POST`
+- **Description:** Pins a specific post in the channel (owner only).
+- **Request Body:** None
+- **Response:** `200 OK`
+
+### 7. Delete Post
+- **Endpoint:** `/api/channels/<id>/posts/<post_id>/`
+- **Method:** `DELETE`
+- **Description:** Deletes a post (owner only).
+- **Request Body:** None
+- **Response:** `204 No Content`
+
+### 8. Post Reaction
+- **Endpoint:** `/api/channels/<id>/posts/<post_id>/react/`
+- **Method:** `POST`, `DELETE`
+- **Description:** `POST` adds/updates a reaction. `DELETE` removes it.
+- **Request Body (POST):** `{ "emoji": "❤️" }`
+- **Response:** `201 Created` / `204 No Content`
+
+### 9. Post Comments
+- **Endpoint:** `/api/channels/<id>/posts/<post_id>/comments/`
+- **Method:** `GET`, `POST`
+- **Description:** `GET` lists comments on a post. `POST` adds a comment.
+- **Request Body (POST):** `{ "content": "Great post!" }`
+- **Response:** `200/201 OK`
+
+### 10. Boost Channel
+- **Endpoint:** `/api/channels/<id>/boost/`
+- **Method:** `POST`
+- **Description:** Initiates a paid boost for a channel to appear in discovery.
+- **Request Body:** `{ "amount": "10.00", "boost_days": 7 }`
+- **Response:** `201 Created`
+
+### 11. Boost Webhook
+- **Endpoint:** `/api/channels/boost/webhook/<payment_id>/confirm/`
+- **Method:** `POST`
+- **Description:** Server-to-server webhook endpoint to confirm a boost payment.
+- **Request Body:** `{ "status": "paid" }`
+- **Response:** `200 OK`
+
+---
+
+## Group App (`/api/groups/`)
+
+### 1. List / Create Groups
+- **Endpoint:** `/api/groups/`
+- **Method:** `GET`, `POST`
+- **Description:** `GET` retrieves the user's groups. `POST` creates a new group.
+- **Request Body (POST):**
+  ```json
+  {
+    "name": "Family Chat",
+    "description": "Group for family",
+    "group_type": "private"
+  }
+  ```
+- **Response:** `200/201 OK`
+
+### 2. Group Detail
+- **Endpoint:** `/api/groups/<id>/`
+- **Method:** `GET`, `PATCH`, `DELETE`
+- **Description:** `GET` details of a group. `PATCH` updates info (admins). `DELETE` soft-deletes the group (owner).
+- **Request Body (PATCH):** `{ "name": "New Name" }`
+- **Response:** `200 OK` or `204 No Content`
+
+### 3. List Members
+- **Endpoint:** `/api/groups/<id>/members/`
+- **Method:** `GET`
+- **Description:** Lists all active members of the group.
+- **Request Body:** None
+- **Response:** `200 OK`
+
+### 4. Add Member
+- **Endpoint:** `/api/groups/<id>/members/add/`
+- **Method:** `POST`
+- **Description:** Adds a user to the group (Admins only for public groups, any member for private groups).
+- **Request Body:** `{ "user_id": 3 }`
+- **Response:** `201 Created`
+
+### 5. Change Member Role
+- **Endpoint:** `/api/groups/<id>/members/<member_id>/role/`
+- **Method:** `PATCH`
+- **Description:** Promotes or demotes a member's role (admin required).
+- **Request Body:** `{ "role": "admin" }`
+- **Response:** `200 OK`
+
+### 6. Remove Member (Kick)
+- **Endpoint:** `/api/groups/<id>/members/<member_id>/`
+- **Method:** `DELETE`
+- **Description:** Kicks a member from the group.
+- **Request Body:** None
+- **Response:** `204 No Content`
+
+### 7. Leave Group
+- **Endpoint:** `/api/groups/<id>/leave/`
+- **Method:** `DELETE`
+- **Description:** Authenticated user voluntarily leaves the group.
+- **Request Body:** None
+- **Response:** `204 No Content`
+
+### 8. Mute / Unmute Group
+- **Endpoint:** `/api/groups/<id>/mute/`
+- **Method:** `POST`, `DELETE`
+- **Description:** `POST` mutes notifications for the group. `DELETE` unmutes.
+- **Request Body:** None
+- **Response:** `200 OK`
+
+### 9. Group Messages (History)
+- **Endpoint:** `/api/groups/<id>/messages/`
+- **Method:** `GET`
+- **Description:** Retrieves the cursor-paginated chat history for the group.
+- **Request Body:** None
+- **Response:** `200 OK` (Paginated list of messages)
+
+### 10. Send Group Message
+- **Endpoint:** `/api/groups/<id>/messages/send/`
+- **Method:** `POST`
+- **Description:** Sends a message to the group chat.
+- **Request Body:**
+  ```json
+  {
+    "content_encrypted": "encrypted content",
+    "message_type": "text"
+  }
+  ```
+- **Response:** `201 Created`
+
+---
+
+## Message App (`/api/messages/`)
+
+### 1. List / Create Conversations (DMs)
+- **Endpoint:** `/api/messages/conversations/`
+- **Method:** `GET`, `POST`
+- **Description:** `GET` dashboard list of DMs. `POST` starts a new DM with a user.
+- **Request Body (POST):** `{ "username": "johndoe123" }`
+- **Response:** `200/201 OK`
+
+### 2. Conversation Detail
+- **Endpoint:** `/api/messages/conversations/<id>/`
+- **Method:** `GET`, `DELETE`
+- **Description:** `GET` full detail of a conversation. `DELETE` soft-deletes the conversation for the current user.
+- **Request Body:** None
+- **Response:** `200 OK` / `204 No Content`
+
+### 3. Conversation Actions (Mute/Block/Archive)
+- **Endpoint:** `/api/messages/conversations/<id>/<action>/`
+- **Method:** `POST`
+- **Description:** Performs an action on the conversation. `<action>` can be `mute`, `unmute`, `block`, `archive`, `unarchive`.
+- **Request Body:** None
+- **Response:** `200 OK`
+
+### 4. Message History
+- **Endpoint:** `/api/messages/conversations/<id>/messages/`
+- **Method:** `GET`
+- **Description:** Retrieves cursor-paginated message history for a 1-on-1 conversation.
+- **Request Body:** None
+- **Response:** `200 OK`
+
+### 5. Send Message (DM)
+- **Endpoint:** `/api/messages/send/`
+- **Method:** `POST`
+- **Description:** Sends a message in a conversation.
+- **Request Body:** 
+  ```json
+  {
+    "conversation_id": 1, // OR "group_id": 1
+    "content_encrypted": "...",
+    "message_type": "text"
+  }
+  ```
+- **Response:** `201 Created`
+
+### 6. Message Detail / Delete
+- **Endpoint:** `/api/messages/<msg_id>/`
+- **Method:** `GET`, `DELETE`
+- **Description:** `GET` a single message. `DELETE` soft-deletes it (`?for_everyone=true` to delete for all participants).
+- **Request Body:** None
+- **Response:** `200 OK` / `204 No Content`
+
+### 7. Read Receipt
+- **Endpoint:** `/api/messages/conversations/<id>/read/`
+- **Method:** `POST`
+- **Description:** Marks all messages up to the latest one as read (REST fallback for WebSockets).
+- **Request Body:** `{ "last_message_id": 100 }`
+- **Response:** `200 OK`
+
+### 8. Search Messages
+- **Endpoint:** `/api/messages/conversations/<id>/search/?q=<term>`
+- **Method:** `GET`
+- **Description:** Searches for messages containing the query term in a conversation.
+- **Request Body:** None
+- **Response:** `200 OK`
+
+### 9. Message Reaction
+- **Endpoint:** `/api/messages/<msg_id>/react/`
+- **Method:** `POST`, `DELETE`
+- **Description:** `POST` adds an emoji reaction. `DELETE` removes it.
+- **Request Body (POST):** `{ "emoji": "👍" }`
+- **Response:** `200 OK` / `204 No Content`
+
+### 10. Pin Message (Inside Chat)
+- **Endpoint:** `/api/messages/conversations/<conv_id>/pin/<msg_id>/`
+- **Method:** `POST`, `DELETE`
+- **Description:** `POST` pins a message in the chat. `DELETE` unpins it.
+- **Request Body:** None
+- **Response:** `200 OK` / `204 No Content`
+
+### 11. Dashboard Pins
+- **Endpoint:** `/api/messages/pins/`
+- **Method:** `GET`, `POST`
+- **Description:** `GET` lists pinned conversations/groups on the dashboard (max 5). `POST` pins a new item.
+- **Request Body (POST):** `{ "conversation_id": 1 }` (or group_id/channel_id)
+- **Response:** `200/201 OK`
+
+### 12. Unpin Dashboard Item
+- **Endpoint:** `/api/messages/pins/<id>/`
+- **Method:** `DELETE`
+- **Description:** Unpins an item from the dashboard.
+- **Request Body:** None
+- **Response:** `204 No Content`
+
+### 13. Conversation Media Files
+- **Endpoint:** `/api/messages/conversations/<id>/media/`
+- **Method:** `GET`
+- **Description:** Retrieves all media files shared in a conversation (can be filtered with `?type=image|video`).
+- **Request Body:** None
+- **Response:** `200 OK`

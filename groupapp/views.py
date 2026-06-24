@@ -25,6 +25,7 @@ from rest_framework.pagination import CursorPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from aamyproject.mixins import StandardResponseMixin
 
 from messageapp.models import Message
 from messageapp.serializers import MessageSerializer
@@ -56,29 +57,23 @@ class GroupMessageCursorPagination(CursorPagination):
 # ─────────────────────────────────────────────────────────────
 # BASE VIEW
 # ─────────────────────────────────────────────────────────────
-class BaseGroupView(APIView):
+class BaseGroupView(StandardResponseMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def ok(self, data, message="Success"):
-        return Response({"success": True, "message": message, "data": data})
+        return self.success_response(data, message=message)
 
     def created(self, data, message="Created"):
-        return Response(
-            {"success": True, "message": message, "data": data},
-            status=status.HTTP_201_CREATED,
-        )
+        return self.success_response(data, message=message, status_code=status.HTTP_201_CREATED)
 
     def bad_request(self, errors, message="Validation error"):
-        return Response(
-            {"success": False, "message": message, "errors": errors},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        return self.error_response(message, status_code=status.HTTP_400_BAD_REQUEST, data=errors)
 
     def not_found(self, message="Not found"):
-        return Response({"success": False, "message": message}, status=status.HTTP_404_NOT_FOUND)
+        return self.error_response(message, status_code=status.HTTP_404_NOT_FOUND)
 
     def forbidden(self, message="Permission denied"):
-        return Response({"success": False, "message": message}, status=status.HTTP_403_FORBIDDEN)
+        return self.error_response(message, status_code=status.HTTP_403_FORBIDDEN)
 
     # ── membership guard, used by almost every view below ─────────
     def get_membership_or_403(self, group_id, user):
@@ -162,7 +157,8 @@ class GroupListCreateView(BaseGroupView):
 
     def post(self, request):
         serializer = CreateGroupSerializer(data=request.data, context={"request": request})
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
         group = serializer.save()
         return self.created(
             GroupDetailSerializer(group, context={"request": request}).data,
@@ -216,7 +212,7 @@ class GroupDetailView(BaseGroupView):
 
         membership.group.soft_delete()
         self.broadcast_to_group(pk, {"type": "group.deleted", "group_id": pk})
-        return Response({"success": True, "message": "Group deleted."}, status=status.HTTP_204_NO_CONTENT)
+        return self.success_response(data={}, message="Group deleted.", status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -248,7 +244,8 @@ class AddMemberView(BaseGroupView):
             return self.forbidden("Only admins/moderators can add members to a public group.")
 
         serializer = AddMemberSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
         try:
             new_member = serializer.save(group=membership.group)
         except ValueError as e:
@@ -287,7 +284,8 @@ class MemberRoleView(BaseGroupView):
                 return self.forbidden("You can't demote an admin.")
 
         serializer = ChangeMemberRoleSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
         updated = serializer.save(target_member=target, granted_by_user=request.user)
 
         self.broadcast_to_group(pk, {
@@ -318,7 +316,7 @@ class RemoveMemberView(BaseGroupView):
             self.broadcast_to_group(pk, {
                 "type": "group.member_left", "user_id": request.user.id,
             })
-            return Response(status=status.HTTP_204_NO_CONTENT)
+            return self.success_response(data={}, message="Left group.", status_code=status.HTTP_204_NO_CONTENT)
 
         target = membership.group.members.filter(id=member_id, is_active=True).first()
         if not target:
@@ -331,7 +329,7 @@ class RemoveMemberView(BaseGroupView):
         self.broadcast_to_group(pk, {
             "type": "group.member_kicked", "user_id": target.user_id, "kicked_by": request.user.id,
         })
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return self.success_response(data={}, message="Member kicked.", status_code=status.HTTP_204_NO_CONTENT)
 
 
 class MuteGroupView(BaseGroupView):
@@ -390,7 +388,8 @@ class SendGroupMessageView(BaseGroupView):
                 return self.forbidden("Only admins can post in this group.")
 
         serializer = SendGroupMessageSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return self.bad_request(serializer.errors)
         message = serializer.save(group=membership.group, sender=request.user)
 
         self.broadcast_to_group(pk, {
