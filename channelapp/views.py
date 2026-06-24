@@ -288,3 +288,25 @@ class DeletePostView(BaseChannelView):
             return self.not_found()
         post.soft_delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+# ─────────────────────────────────────────────────────────────
+# REACTIONS
+# ─────────────────────────────────────────────────────────────
+class PostReactionView(BaseChannelView):
+    def post(self, request, pk, post_id):
+        post = ChannelPost.objects.filter(id=post_id, channel_id=pk, deleted_at__isnull=True).first()
+        if not post:
+            return self.not_found()
+        emoji = request.data.get("emoji", "👍")
+        reaction, _created = ChannelPostReaction.objects.update_or_create(
+            post=post, user=request.user, defaults={"emoji": emoji}
+        )
+        return self.created(ChannelPostReactionSerializer(reaction).data, "Reaction saved.")
+
+    def delete(self, request, pk, post_id):
+        deleted, _ = ChannelPostReaction.objects.filter(
+            post_id=post_id, post__channel_id=pk, user=request.user
+        ).delete()
+        if not deleted:
+            return self.not_found("You haven't reacted to this post.")
+        return Response(status=status.HTTP_204_NO_CONTENT)
