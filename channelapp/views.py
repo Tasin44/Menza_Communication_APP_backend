@@ -206,4 +206,22 @@ class ToggleDiscoverableView(BaseChannelView):
         return self.ok(ChannelDetailSerializer(channel, context={"request": request}).data, "Channel is now private.")
 
 
+# ─────────────────────────────────────────────────────────────
+# SUBSCRIBE
+# ─────────────────────────────────────────────────────────────
+class SubscribeView(BaseChannelView):
+    def post(self, request, pk):
+        channel = self.get_channel_or_404(pk)
+        if not channel:
+            return self.not_found()
+        if channel.channel_type == Channel.ChannelType.PRIVATE and channel.created_by_id != request.user.id:
+            return self.forbidden("This channel is private.")
+        sub = ChannelSubscriber.subscribe(channel, request.user)
+        return self.created({"subscribed": True}, "Subscribed.")
 
+    def delete(self, request, pk):
+        channel = self.get_channel_or_404(pk)
+        if not channel:
+            return self.not_found()
+        ChannelSubscriber.unsubscribe(channel, request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
