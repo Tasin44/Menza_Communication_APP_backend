@@ -278,3 +278,13 @@ class PinPostView(BaseChannelView):
             return self.not_found()
         post.pin()
         return self.ok({}, "Post pinned.")
+class DeletePostView(BaseChannelView):
+    def delete(self, request, pk, post_id):
+        channel, err = self.get_owned_channel_or_403(pk, request.user)
+        if err:
+            return err
+        post = channel.posts.filter(id=post_id, deleted_at__isnull=True).first()
+        if not post:
+            return self.not_found()
+        post.soft_delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
