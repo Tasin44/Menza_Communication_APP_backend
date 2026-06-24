@@ -136,3 +136,19 @@ class ChannelPostReactionSerializer(serializers.ModelSerializer):
         model = ChannelPostReaction
         fields = ["id", "emoji", "reactor", "created_at"]
         read_only_fields = fields
+
+class ChannelPostCommentSerializer(serializers.ModelSerializer):
+    author = SenderSerializer(read_only=True)
+
+    class Meta:
+        model = ChannelPostComment
+        fields = ["id", "author", "content", "created_at"]
+        read_only_fields = ["id", "author", "created_at"]
+
+    def create(self, validated_data):
+        post = self.context["post"]
+        if not post.comments_enabled:
+            raise serializers.ValidationError("Comments are disabled on this post.")
+        return ChannelPostComment.objects.create(
+            post=post, author=self.context["request"].user, **validated_data
+        )
