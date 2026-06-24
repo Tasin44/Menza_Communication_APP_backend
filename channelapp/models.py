@@ -206,3 +206,26 @@ class ChannelSubscriber(models.Model):
             channel.bump_subscriber_count(-1)
         return bool(deleted)
 
+# ─────────────────────────────────────────────────────────────
+# CHANNEL VIEW  (lightweight analytics — unique viewers, incl. non-subs)
+# ─────────────────────────────────────────────────────────────
+class ChannelView(models.Model):
+    """
+    Spec: "Do owners see unique viewer count separate from subscriber
+    count?" — yes. One row per (channel, user) so repeat views by the
+    same user don't inflate the count; this is intentionally separate
+    from ChannelSubscriber since viewing doesn't require subscribing.
+    """
+
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="views")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="channel_views")
+    first_viewed_at = models.DateTimeField(auto_now_add=True)
+    last_viewed_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "channel_views"
+        unique_together = [("channel", "user")]
+
+    @classmethod
+    def record(cls, channel: Channel, user):
+        cls.objects.update_or_create(channel=channel, user=user)
