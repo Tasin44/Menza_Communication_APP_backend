@@ -353,3 +353,24 @@ class BoostChannelView(BaseChannelView):
         serializer.is_valid(raise_exception=True)
         payment = serializer.save()
         return self.created(CreateBoostPaymentSerializer(payment).data, "Boost payment created — pending confirmation.")
+
+class BoostWebhookView(BaseChannelView):
+    """
+    POST /api/channels/boost/webhook/<payment_id>/confirm/
+    Called server-to-server by the payment provider's webhook handler
+    (not directly by the channel owner) — wire actual signature
+    verification for your provider before trusting `status` in production.
+    """
+    permission_classes = []  # webhook auth handled separately (provider signature)
+
+    def post(self, request, payment_id):
+        payment = ChannelBoostPayment.objects.filter(id=payment_id).select_related("channel").first()
+        if not payment:
+            return self.not_found()
+
+        if request.data.get("status") == "paid":
+            payment.mark_paid()
+            return self.ok({}, "Boost applied.")
+
+        payment.mark_failed()
+        return self.ok({}, "Payment marked failed.")
