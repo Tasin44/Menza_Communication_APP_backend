@@ -322,3 +322,13 @@ class PostCommentView(BaseChannelView):
             return self.not_found()
         comments = post.comments.filter(is_deleted=False).select_related("author").order_by("created_at")
         return self.ok(ChannelPostCommentSerializer(comments, many=True, context={"request": request}).data)
+    def post(self, request, pk, post_id):
+        post = ChannelPost.objects.filter(id=post_id, channel_id=pk, deleted_at__isnull=True).first()
+        if not post:
+            return self.not_found()
+        serializer = ChannelPostCommentSerializer(
+            data=request.data, context={"request": request, "post": post}
+        )
+        serializer.is_valid(raise_exception=True)
+        comment = serializer.save()
+        return self.created(ChannelPostCommentSerializer(comment).data, "Comment added.")
