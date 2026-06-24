@@ -109,3 +109,19 @@ class CreateChannelSerializer(serializers.ModelSerializer):
         # their dashboard list immediately).
         ChannelSubscriber.subscribe(channel, owner)
         return channel
+class ToggleDiscoverableSerializer(serializers.Serializer):
+    """
+    Spec: "Confirmation modal: user taps 'I understand this channel will
+    be public' before toggle saves." `confirmed` must be explicitly True —
+    we refuse to flip the flag on an implicit/default value.
+    """
+
+    confirmed = serializers.BooleanField()
+
+    def save(self, channel: Channel):
+        if not self.validated_data["confirmed"]:
+            raise serializers.ValidationError(
+                "You must confirm that channel content will become public."
+            )
+        channel.make_discoverable()
+        return channel
