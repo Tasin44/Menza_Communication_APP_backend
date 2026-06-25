@@ -397,7 +397,13 @@ class SendGroupMessageView(BaseGroupView):
             "message_id": message.id,
             "sender_id": request.user.id,
             "sender_username": request.user.username,
+            "content_encrypted": message.content_encrypted,
             "message_type": message.message_type,
+            "files": [
+                {"file_url": f.file_url, "media_type": f.media_type}
+                for f in message.files.all()
+            ],
+            "reply_to_id": message.reply_to_id,
             "sent_at": message.sent_at.isoformat(),
         })
         return self.created(
