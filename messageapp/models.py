@@ -74,6 +74,20 @@ class Conversation(models.Model):
     # updated_at changes on every new message → drives dashboard ordering
     updated_at = models.DateTimeField(auto_now=True, db_index=True)
 
+    # ── Acceptance Flow ───────────────────────────────────────────
+    is_accepted = models.BooleanField(
+        default=False,
+        help_text="Whether the receiver has accepted the conversation."
+    )
+    accepted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="accepted_conversations",
+    )
+    accepted_time = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         db_table = "conversations"
         ordering = ["-updated_at"]    # newest activity first by default

@@ -349,12 +349,32 @@ class ConversationActionView(BaseMessagingView):
             "unblock": self._unblock,
             "archive": self._archive,
             "unarchive": self._unarchive,
+            "accept": self._accept,
         }
         handler = dispatch.get(action)
         if not handler:
             return self.bad_request({}, f"Unknown action: {action}")
 
         return handler(request, pk)
+
+    def _accept(self, request, pk):
+        """Accept a conversation (receiver only)."""
+        conversation = self.get_conversation_or_403(pk, request.user)
+        if not conversation:
+            return self.not_found("Conversation not found.")
+            
+        if conversation.is_accepted:
+            return self.bad_request({"error": "Conversation is already accepted."})
+            
+        if conversation.created_by == request.user:
+            return self.forbidden("The sender cannot accept their own conversation.")
+            
+        conversation.is_accepted = True
+        conversation.accepted_by = request.user
+        conversation.accepted_time = timezone.now()
+        conversation.save(update_fields=["is_accepted", "accepted_by", "accepted_time"])
+        
+        return self.ok({}, "Conversation accepted.")
 
     def _mute(self, request, pk):
         """Mute notifications for this conversation."""

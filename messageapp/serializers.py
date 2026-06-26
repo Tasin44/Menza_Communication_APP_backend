@@ -306,6 +306,17 @@ class SendMessageSerializer(BlockCheckMixin, serializers.Serializer):
                     {"conversation_id": "You are not part of this conversation."}
                 )
 
+            # Check acceptance rules: no files until accepted
+            if not conversation.is_accepted:
+                if has_files:
+                    raise serializers.ValidationError(
+                        "Cannot send files until the conversation is accepted by the other person."
+                    )
+                if attrs.get("message_type", Message.MessageType.TEXT) != Message.MessageType.TEXT:
+                    raise serializers.ValidationError(
+                        "Cannot send non-text messages until the conversation is accepted."
+                    )
+
             # Check block status between participants
             # Get the OTHER participant
             other_participant = ConversationParticipant.objects.filter(
@@ -516,6 +527,9 @@ class ConversationListSerializer(serializers.ModelSerializer):
             "is_muted",
             "is_pinned",
             "unread_count",
+            "is_accepted",
+            "accepted_by",
+            "accepted_time",
             "updated_at",
         ]
         read_only_fields = fields
@@ -645,6 +659,7 @@ class ConversationDetailSerializer(serializers.ModelSerializer):
     """
 
     other_person = serializers.SerializerMethodField()
+    me = serializers.SerializerMethodField()
     my_settings = serializers.SerializerMethodField()
     pinned_messages = serializers.SerializerMethodField()
     media_files = serializers.SerializerMethodField()
@@ -654,13 +669,31 @@ class ConversationDetailSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "other_person",
+            "me",
             "my_settings",
             "pinned_messages",
             "media_files",
+            "is_accepted",
+            "accepted_by",
+            "accepted_time",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
+
+    def get_me(self, obj):
+        """Current user's details."""
+        request = self.context.get("request")
+        if not request:
+            return None
+        u = request.user
+        return {
+            "id": u.id,
+            "username": u.username,
+            "email": u.email,
+            "profile_image": u.profile_image,
+            "last_seen": u.last_seen,
+        }
 
     def get_other_person(self, obj):
         """
@@ -691,14 +724,32 @@ class ConversationDetailSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         if not request:
             return {}
+            
+        is_blocked_by_me = False
+        has_blocked_me = False
+        other_part = ConversationParticipant.objects.filter(
+            conversation=obj,
+        ).exclude(user=request.user).first()
+        
+        if other_part and other_part.user:
+            from authapp.models import BlockedUser
+            is_blocked_by_me = BlockedUser.objects.filter(blocker=request.user, blocked=other_part.user).exists()
+            has_blocked_me = BlockedUser.objects.filter(blocker=other_part.user, blocked=request.user).exists()
+
         p = ConversationParticipant.objects.filter(
             conversation=obj, user=request.user
         ).first()#❔why always use first with .filter()
         if not p:
-            return {}
+            return {
+                "is_blocked_by_me": is_blocked_by_me,
+                "has_blocked_me": has_blocked_me,
+            }
+            
         return {
             "is_muted": p.is_muted,
             "muted_until": p.muted_until,
+            "is_blocked_by_me": is_blocked_by_me,
+            "has_blocked_me": has_blocked_me,
         }
 
     def get_pinned_messages(self, obj):
@@ -745,6 +796,13 @@ class CreateConversationSerializer(BlockCheckMixin, serializers.Serializer):
     # Find the other user by username OR phone
     username = serializers.CharField(required=False, allow_blank=True)
     phone = serializers.CharField(required=False, allow_blank=True)
+    
+    # Initial message required for conversation creation
+    content_encrypted = serializers.CharField(required=True)
+    message_type = serializers.ChoiceField(
+        choices=Message.MessageType.choices,
+        default=Message.MessageType.TEXT,
+    )
 
     def validate(self, attrs):#❔from where this attrs data is coming?
         username = attrs.get("username", "").strip()
@@ -754,6 +812,10 @@ class CreateConversationSerializer(BlockCheckMixin, serializers.Serializer):
             raise serializers.ValidationError(
                 "Provide either username or phone number."
             )
+            
+        content_encrypted = attrs.get("content_encrypted", "").strip()
+        if not content_encrypted:
+            raise serializers.ValidationError({"content_encrypted": "Initial message content is required."})
 
         sender = self.context["request"].user
 
@@ -812,19 +874,34 @@ class CreateConversationSerializer(BlockCheckMixin, serializers.Serializer):
         ).select_related("conversation").first()#❔how the select_related is working here 
 
         if existing:
-            # Return the existing conversation — no duplicate created
-            return existing.conversation, False   # (conversation, created)#❔why returning false here 
+            conversation = existing.conversation
+            created = False
+        else:
+            # ── Create new conversation ───────────────────────────────
+            conversation = Conversation.objects.create(created_by=sender, is_accepted=False)
 
-        # ── Create new conversation ───────────────────────────────
-        conversation = Conversation.objects.create(created_by=sender)
+            # Create participant rows for BOTH users
+            ConversationParticipant.objects.bulk_create([
+                ConversationParticipant(conversation=conversation, user=sender),
+                ConversationParticipant(conversation=conversation, user=target),
+            ])
+            created = True
 
-        # Create participant rows for BOTH users
-        ConversationParticipant.objects.bulk_create([
-            ConversationParticipant(conversation=conversation, user=sender),
-            ConversationParticipant(conversation=conversation, user=target),
-        ])
+        # ── Send the initial message ──────────────────────────────
+        message = Message.objects.create(
+            conversation=conversation,
+            sender=sender,
+            message_type=self.validated_data.get("message_type", "text"),
+            content_encrypted=self.validated_data["content_encrypted"]
+        )
+        
+        # update conversation preview
+        conversation.update_last_message(self.validated_data["content_encrypted"], message.sent_at)
+        
+        # Create MessageStatus for target
+        MessageStatus.objects.create(message=message, recipient=target)
 
-        return conversation, True   # (conversation, created)
+        return conversation, created
 
 
 # ─────────────────────────────────────────────────────────────
