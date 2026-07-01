@@ -98,7 +98,16 @@ class SignupView(StandardResponseMixin, APIView):
         # In production: use Redis with TTL=10min, key=f"signup:{identifier}"
         # For now we return pending_data to client and expect it back in verify step.
         # The client sends it again with the OTP — see VerifySignupOTPSerializer.
-        _send_otp(identifier, otp_code, "signup")#❓why _used before _send_otp
+        _send_otp(identifier, otp_code, "signup")
+        '''
+        "This function is private (internal). Don't call it from outside this file."
+
+        _ is a signal that it's meant for internal use.
+
+        Why use it here?
+        Because this function is only used inside views.py.
+        You don't want other files doing: from views import _send_otp
+        '''
         return self.success_response(
             data={"identifier": identifier},
             message=f"OTP sent to {identifier}. Please verify within 10 minutes."
@@ -211,6 +220,40 @@ class ForgotPasswordView(StandardResponseMixin, APIView):
         # We still call is_valid but catch the "account not found" validation
         # separately so the HTTP response is always 200 (no account enumeration)
         if not serializer.is_valid():#❓why not I called here serializer.is_valid(raise_exception=true) like I did in previous view classes 
+            '''
+            Normally you can write
+
+            serializer.is_valid(raise_exception=True)
+
+            If validation fails, Django immediately raises
+
+            ValidationError  and returns
+
+            400 Bad Request
+            But here ,Your project wants Always return 200 for security.
+
+            Imagine
+
+            Email exists
+
+            ↓
+
+            Return
+
+            OTP Sent
+
+            Email doesn't exist
+
+            ↓
+
+            Still return
+
+            OTP Sent
+
+            Otherwise hackers can discover registered emails. Because of this, you need to manually check
+
+            serializer.errors , So you cannot use raise_exception=True here.
+            '''
             # If only error is our vague "if account exists" message, return 200
             errors = serializer.errors
             if list(errors.keys()) == ["identifier"]:
@@ -328,6 +371,12 @@ class UserSearchView(StandardResponseMixin, APIView):
 
     def get(self, request):
         query = request.query_params.get("q", "").strip()
+        '''
+        if we use just request.query_params, it'll just take request.data means POST method. 
+        but as it is get method, and the parameters will pass through url 
+        /users/search?q=john
+        thats why 
+        '''
 
         if len(query) < 2:
             return self.error_response("Search query must be at least 2 characters.")
@@ -335,7 +384,17 @@ class UserSearchView(StandardResponseMixin, APIView):
         # Get ids of users this person has blocked (hide them from search too)
         blocked_ids = BlockedUser.objects.filter(
             blocker=request.user
-        ).values_list("blocked_id", flat=True)#❓what does .values_list use here means ?
+        ).values_list("blocked_id", flat=True)
+        '''
+        Why: values_list() returns only specific field values instead of full objects.
+        What it does:
+            values_list("blocked_id") → Returns list of tuples: [(1,), (2,), (3,)]
+            flat=True → Returns flat list: [1, 2, 3]
+        Without flat: [(1,), (2,), (3,)]
+        With flat: [1, 2, 3]
+        Use case: We need a list of IDs to exclude them from search results.
+
+        '''
 
         from django.db.models import Q
         users = User.objects.filter(
@@ -343,7 +402,7 @@ class UserSearchView(StandardResponseMixin, APIView):
             status=User.Status.ACTIVE,
             is_verified=True,
         ).exclude(
-            id=request.user.id
+            id=request.user.id#so that current user can't find himself
         ).exclude(
             id__in=blocked_ids
         )[:20]   # cap at 20 results
@@ -375,7 +434,7 @@ class ContactListCreateView(StandardResponseMixin, APIView):
             .order_by("contact_first_name", "contact_last_name")
         )
         serializer = ContactSerializer(
-            contacts, many=True, context={"request": request}#❓what does meany true means here , when I've to pass it 
+            contacts, many=True, context={"request": request}
         )
         return self.success_response(data=serializer.data, message="Contacts fetched successfully.")
 
@@ -404,7 +463,16 @@ class ContactDetailView(StandardResponseMixin, APIView):
 
     def _get_contact(self, request, pk):
         try:
-            return Contact.objects.get(id=pk, owner=request.user)#❓how to know I've to pass this id and owner here ?
+            return Contact.objects.get(id=pk, owner=request.user)
+            '''
+            How do we know to pass owner?
+            Because every contact belongs to an owner.
+                owner = models.ForeignKey(User,...)
+            Whenever a model belongs to a user, always filter by
+                owner=request.user
+
+            Why query with both id AND owner: This ensures security - users can only access their own contacts, not others.
+            '''
         except Contact.DoesNotExist:
             return None
 
@@ -452,6 +520,13 @@ class BlockUserView(StandardResponseMixin, APIView):
         if not serializer.is_valid():
             return self.error_response("Validation Error", data=serializer.errors)
         obj, created = serializer.save(blocker=request.user)
+        '''
+        why .save(blocker=request.user) instead of serializer.save()
+        
+        because serializers needs to know, who is blocking.
+        The request body only contains user_id, it doesn't contain 
+        blocker 
+        '''
 
         if not created:
             return self.success_response(data={}, message="User is already blocked.")
